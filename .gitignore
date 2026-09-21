@@ -104,3 +104,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# CMSIS-Pack 下载缓存
+FlashAlgo/.packcache/

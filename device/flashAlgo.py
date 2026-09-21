@@ -1,4 +1,5 @@
 #! python3
+import io
 import ctypes
 import struct
 import collections
@@ -42,7 +43,11 @@ class FlashAlgo(object):
 
         try:
             from elftools.elf.elffile import ELFFile
-            self.elf = ELFFile(open(path, 'rb'))
+
+            ''' 整个读进内存再解析：直接把打开的文件交给 ELFFile 的话句柄不会释放，
+                Windows 上文件就一直被占着，想换掉这个 .FLM 都换不了 '''
+            with open(path, 'rb') as f:
+                self.elf = ELFFile(io.BytesIO(f.read()))
 
             self.flash_algo['arch'] = self.elf.get_machine_arch()
 
@@ -85,6 +90,8 @@ class FlashAlgo(object):
         self.flash_algo['flash_start']      = fldev.DevAdr
         self.flash_algo['flash_size']       = fldev.szDev
         self.flash_algo['flash_page_size']  = fldev.szPage
+        self.flash_algo['flash_empty']      = fldev.valEmpty   # 擦除后的字节值，绝大多数 Flash 是 0xFF
+        self.flash_algo['device_name']      = fldev.DevName.decode('latin-1', 'replace').strip('\x00')
 
         self.flash_algo['sector_sizes'] = []
         for sector in fldev.sectors:

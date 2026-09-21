@@ -6,340 +6,504 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
-    <height>270</height>
+    <width>780</width>
+    <height>300</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>800</width>
-    <height>160</height>
-   </size>
-  </property>
-  <property name="maximumSize">
-   <size>
-    <width>1000</width>
-    <height>270</height>
+    <width>720</width>
+    <height>0</height>
    </size>
   </property>
   <property name="windowTitle">
    <string>MCU Programmer</string>
   </property>
+  <property name="acceptDrops">
+   <bool>true</bool>
+  </property>
   <layout class="QVBoxLayout" name="vLayout">
    <property name="spacing">
-    <number>12</number>
+    <number>8</number>
    </property>
    <item>
-    <layout class="QHBoxLayout" name="hLayout1">
-     <item>
-      <widget class="QLabel" name="lblMCU">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>MCU ：</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbMCU">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="minimumSize">
-        <size>
-         <width>200</width>
-         <height>0</height>
-        </size>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <spacer name="hSpacer1">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QLabel" name="lblAddr">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>起始：</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbAddr">
-       <property name="minimumSize">
-        <size>
-         <width>75</width>
-         <height>0</height>
-        </size>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLabel" name="lblSize">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>大小：</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbSize">
-       <property name="minimumSize">
-        <size>
-         <width>75</width>
-         <height>0</height>
-        </size>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <spacer name="hSpacer2">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeType">
-        <enum>QSizePolicy::Fixed</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>62</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="hLayout2">
-     <item>
-      <widget class="QLabel" name="lblDLL">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>DLL ：</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbDLL"/>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btnDLL">
-       <property name="maximumSize">
-        <size>
-         <width>50</width>
-         <height>16777215</height>
-        </size>
-       </property>
-       <property name="text">
-        <string>...</string>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="hLayout3">
-     <item>
-      <widget class="QLabel" name="lblHEX">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>文件：</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbHEX"/>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btnHEX">
-       <property name="maximumSize">
-        <size>
-         <width>50</width>
-         <height>16777215</height>
-        </size>
-       </property>
-       <property name="text">
-        <string>...</string>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <widget class="QTableWidget" name="table">
-     <property name="enabled">
-      <bool>true</bool>
+    <widget class="QGroupBox" name="grpTarget">
+     <property name="title">
+      <string>目标芯片</string>
      </property>
-     <property name="editTriggers">
-      <set>QAbstractItemView::NoEditTriggers</set>
-     </property>
-     <property name="rowCount">
-      <number>3</number>
-     </property>
-     <property name="columnCount">
-      <number>3</number>
-     </property>
-     <attribute name="horizontalHeaderVisible">
-      <bool>false</bool>
-     </attribute>
-     <attribute name="verticalHeaderVisible">
-      <bool>false</bool>
-     </attribute>
-     <row/>
-     <row/>
-     <row/>
-     <column/>
-     <column/>
-     <column/>
+     <layout class="QHBoxLayout" name="hLayoutTarget">
+      <item>
+       <widget class="QLabel" name="lblMCU">
+        <property name="text">
+         <string>型号</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="cmbMCU">
+        <property name="minimumSize">
+         <size>
+          <width>200</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnDetect">
+        <property name="maximumSize">
+         <size>
+          <width>60</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>连上目标芯片，读它自己的 ID 来判断型号；本地没有对应算法时可以联网补下来</string>
+        </property>
+        <property name="text">
+         <string>识别</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblChipInfo">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+          <horstretch>1</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="hSpacerTarget">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeType">
+         <enum>QSizePolicy::Fixed</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>16</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblAddr">
+        <property name="text">
+         <string>起始</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="cmbAddr">
+        <property name="minimumSize">
+         <size>
+          <width>85</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblSize">
+        <property name="text">
+         <string>大小</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="cmbSize">
+        <property name="minimumSize">
+         <size>
+          <width>85</width>
+          <height>0</height>
+         </size>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="hLayout4">
-     <property name="topMargin">
-      <number>10</number>
+    <widget class="QGroupBox" name="grpLink">
+     <property name="title">
+      <string>调试接口</string>
      </property>
-     <item>
-      <widget class="QLabel" name="lblMode">
-       <property name="text">
-        <string>模式：</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbMode">
-       <item>
+     <layout class="QGridLayout" name="gridLayoutLink">
+      <item row="0" column="0">
+       <widget class="QLabel" name="lblDLL">
         <property name="text">
-         <string>ARM SWD</string>
+         <string>调试器</string>
         </property>
-       </item>
-       <item>
+       </widget>
+      </item>
+      <item row="0" column="1" colspan="4">
+       <widget class="QComboBox" name="cmbDLL">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+          <horstretch>1</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="5">
+       <widget class="QPushButton" name="btnDLL">
+        <property name="maximumSize">
+         <size>
+          <width>36</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>选择 JLink DLL 路径</string>
+        </property>
         <property name="text">
-         <string>ARM JTAG</string>
+         <string>...</string>
         </property>
-       </item>
-       <item>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="lblMode">
         <property name="text">
-         <string>RISC-V JTAG</string>
+         <string>模式</string>
         </property>
-       </item>
-       <item>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="cmbMode">
+        <item>
+         <property name="text">
+          <string>ARM SWD</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>ARM JTAG</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>RISC-V JTAG</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>RISC-V cJTAG</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+      <item row="1" column="2">
+       <widget class="QLabel" name="lblSpeed">
         <property name="text">
-         <string>RISC-V cJTAG</string>
+         <string>速度</string>
         </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="cmbSpeed">
-       <item>
-        <property name="text">
-         <string>1 MHz</string>
+       </widget>
+      </item>
+      <item row="1" column="3">
+       <widget class="QComboBox" name="cmbSpeed">
+        <item>
+         <property name="text">
+          <string>1 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>2 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>4 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>5 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>8 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>10 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>20 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>40 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>50 MHz</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>80 MHz</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+      <item row="1" column="4">
+       <spacer name="hSpacerLink">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>2 MHz</string>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>4 MHz</string>
+       </spacer>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="grpFile">
+     <property name="title">
+      <string>程序文件（可将 .bin / .hex / .ini 拖入窗口）</string>
+     </property>
+     <layout class="QVBoxLayout" name="vLayoutFile">
+      <item>
+       <layout class="QHBoxLayout" name="hLayoutFile">
+        <item>
+         <widget class="QComboBox" name="cmbHEX">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>1</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnHEX">
+          <property name="maximumSize">
+           <size>
+            <width>36</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>选择程序文件</string>
+          </property>
+          <property name="text">
+           <string>...</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnNewList">
+          <property name="toolTip">
+           <string>新建一个 Bootloader + App 烧写列表（.ini）</string>
+          </property>
+          <property name="text">
+           <string>Boot+App</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="hLayoutTableBtn">
+        <item>
+         <widget class="QLabel" name="lblListHint">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+            <horstretch>1</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text">
+           <string>双击「地址」可改地址，双击「文件」可选文件，勾选的条目才会烧写</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnAddRow">
+          <property name="text">
+           <string>添加</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnDelRow">
+          <property name="text">
+           <string>删除</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QTableWidget" name="table">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>110</height>
+         </size>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>5 MHz</string>
+        <property name="editTriggers">
+         <set>QAbstractItemView::DoubleClicked|QAbstractItemView::EditKeyPressed</set>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>8 MHz</string>
+        <property name="selectionBehavior">
+         <enum>QAbstractItemView::SelectRows</enum>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>10 MHz</string>
+        <property name="rowCount">
+         <number>0</number>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>20 MHz</string>
+        <property name="columnCount">
+         <number>3</number>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>40 MHz</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>50 MHz</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>80 MHz</string>
-        </property>
-       </item>
-      </widget>
-     </item>
+        <attribute name="horizontalHeaderVisible">
+         <bool>true</bool>
+        </attribute>
+        <attribute name="horizontalHeaderStretchLastSection">
+         <bool>true</bool>
+        </attribute>
+        <attribute name="verticalHeaderVisible">
+         <bool>false</bool>
+        </attribute>
+        <column>
+         <property name="text">
+          <string>烧写</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>地址</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>文件（双击修改）</string>
+         </property>
+        </column>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="hLayoutProgress">
      <item>
       <widget class="QProgressBar" name="prgInfo">
-       <property name="enabled">
-        <bool>true</bool>
-       </property>
        <property name="sizePolicy">
         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-         <horstretch>60</horstretch>
+         <horstretch>1</horstretch>
          <verstretch>0</verstretch>
         </sizepolicy>
        </property>
-       <property name="maximum">
+       <property name="minimum">
         <number>0</number>
+       </property>
+       <property name="maximum">
+        <number>100</number>
        </property>
        <property name="value">
         <number>0</number>
        </property>
        <property name="alignment">
         <set>Qt::AlignCenter</set>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="lblStatus">
+       <property name="minimumSize">
+        <size>
+         <width>250</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>就绪</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btnStop">
+       <property name="toolTip">
+        <string>在当前扇区/页结束后停下来</string>
+       </property>
+       <property name="text">
+        <string>停止</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="hLayoutAction">
+     <item>
+      <widget class="QCheckBox" name="chkVerify">
+       <property name="toolTip">
+        <string>烧写完成后回读比对，关闭可加快烧写速度</string>
+       </property>
+       <property name="text">
+        <string>写后校验</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="chkRun">
+       <property name="toolTip">
+        <string>操作结束断开连接时复位芯片并运行</string>
+       </property>
+       <property name="text">
+        <string>完成后复位运行</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QToolButton" name="btnDebug">
+       <property name="toolTip">
+        <string>显示/隐藏调试面板</string>
+       </property>
+       <property name="text">
+        <string>调试</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QToolButton" name="btnLog">
+       <property name="toolTip">
+        <string>显示/隐藏日志</string>
+       </property>
+       <property name="text">
+        <string>日志</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
        </property>
       </widget>
      </item>
@@ -375,6 +539,9 @@
        <property name="text">
         <string>擦写</string>
        </property>
+       <property name="default">
+        <bool>true</bool>
+       </property>
       </widget>
      </item>
      <item>
@@ -385,6 +552,243 @@
       </widget>
      </item>
     </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="grpDebug">
+     <property name="title">
+      <string>调试</string>
+     </property>
+     <layout class="QVBoxLayout" name="vLayoutDebug">
+      <item>
+       <layout class="QHBoxLayout" name="hLayoutDebugBtn">
+        <item>
+         <widget class="QPushButton" name="btnConnect">
+          <property name="toolTip">
+           <string>连上目标芯片并保持连接，期间可以随时暂停/运行/看内存</string>
+          </property>
+          <property name="text">
+           <string>连接</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnReset">
+          <property name="toolTip">
+           <string>复位并运行；按住 Shift 点击则复位后停在复位向量上</string>
+          </property>
+          <property name="text">
+           <string>复位</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnHalt">
+          <property name="text">
+           <string>暂停</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnGo">
+          <property name="text">
+           <string>运行</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnStep">
+          <property name="text">
+           <string>单步</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="lblDebug">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+            <horstretch>1</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text">
+           <string>未连接</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="hLayoutMem">
+        <item>
+         <widget class="QLabel" name="lblMemAddr">
+          <property name="text">
+           <string>地址</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="edtMemAddr">
+          <property name="maximumSize">
+           <size>
+            <width>110</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>0x20000000</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="lblMemSize">
+          <property name="text">
+           <string>长度</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="edtMemSize">
+          <property name="maximumSize">
+           <size>
+            <width>70</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>256</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnMemRead">
+          <property name="text">
+           <string>读内存</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="lblMemData">
+          <property name="text">
+           <string>写入</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="edtMemData">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>1</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>十六进制字节，如 12 34 AB CD</string>
+          </property>
+          <property name="placeholderText">
+           <string>12 34 AB CD</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnMemWrite">
+          <property name="text">
+           <string>写内存</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="hLayoutMemView">
+        <item>
+         <widget class="QPlainTextEdit" name="txtMem">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+            <horstretch>1</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>170</height>
+           </size>
+          </property>
+          <property name="readOnly">
+           <bool>true</bool>
+          </property>
+          <property name="lineWrapMode">
+           <enum>QPlainTextEdit::NoWrap</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QTableWidget" name="tblRegs">
+          <property name="maximumSize">
+           <size>
+            <width>230</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>230</width>
+            <height>170</height>
+           </size>
+          </property>
+          <property name="editTriggers">
+           <set>QAbstractItemView::NoEditTriggers</set>
+          </property>
+          <property name="columnCount">
+           <number>2</number>
+          </property>
+          <attribute name="horizontalHeaderVisible">
+           <bool>true</bool>
+          </attribute>
+          <attribute name="horizontalHeaderStretchLastSection">
+           <bool>true</bool>
+          </attribute>
+          <attribute name="verticalHeaderVisible">
+           <bool>false</bool>
+          </attribute>
+          <column>
+           <property name="text">
+            <string>寄存器</string>
+           </property>
+          </column>
+          <column>
+           <property name="text">
+            <string>值</string>
+           </property>
+          </column>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="txtLog">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>150</height>
+      </size>
+     </property>
+     <property name="readOnly">
+      <bool>true</bool>
+     </property>
+     <property name="lineWrapMode">
+      <enum>QPlainTextEdit::NoWrap</enum>
+     </property>
+     <property name="maximumBlockCount">
+      <number>5000</number>
+     </property>
+    </widget>
    </item>
   </layout>
  </widget>

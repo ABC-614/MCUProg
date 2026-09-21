@@ -6,16 +6,25 @@ import operator
 import jlink
 import openocd
 
+try:
+    import stlink
+except ImportError as e:      # pyusb 没装时仍然可以用 J-Link / OpenOCD
+    stlink = None
+    print(f'ST-Link support unavailable: {e}')
+
+''' 这几种探测器共用一套接口，pyocd 的 CortexM 是另一套 '''
+DIRECT = tuple(cls for cls in (jlink.JLink, openocd.OpenOCD, stlink and stlink.STLink) if cls)
+
 
 class XLink(object):
     def __init__(self, xlk):
         self.xlk = xlk
 
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.reg_add_alias()
 
     def open(self, mode, core, speed):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.open(mode, core, speed)
 
             self.reg_add_alias()
@@ -77,79 +86,79 @@ class XLink(object):
 
     @property
     def mode(self):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.mode
         else:
             return 'arm'
     
     def write_U8(self, addr, val):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.write_U8(addr, val)
         else:
             self.xlk.write8(addr, val)
 
     def write_U16(self, addr, val):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.write_U16(addr, val)
         else:
             self.xlk.write16(addr, val)
 
     def write_U32(self, addr, val):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.write_U32(addr, val)
         else:
             self.xlk.write32(addr, val)
 
     def write_mem_U8(self, addr, data):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.write_mem_U8(addr, data)
         else:
             self.xlk.write_memory_block8(addr, data)
 
     def write_mem_U32(self, addr, data):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.write_mem_U32(addr, data)
         else:
             self.xlk.write_memory_block32(addr, data)
 
     def read_mem_U8(self, addr, count):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.read_mem_U8(addr, count)
         else:
             return self.xlk.read_memory_block8(addr, count)
 
     def read_mem_U16(self, addr, count):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.read_mem_U16(addr, count)
         else:
             return [self.xlk.read16(addr+i*2) for i in range(count)]
 
     def read_mem_U32(self, addr, count):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.read_mem_U32(addr, count)
         else:
             return self.xlk.read_memory_block32(addr, count)
 
     def read_U32(self, addr):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.read_U32(addr)
         else:
             return self.xlk.read32(addr)
 
     def read_reg(self, reg):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.read_reg(reg.lower())
         else:
             return self.xlk.read_core_register_raw(reg)
 
     def read_regs(self, rlist):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return dict(zip(rlist, self.xlk.read_regs([reg.lower() for reg in rlist]).values()))
         else:
             return dict(zip(rlist, self.xlk.read_core_registers_raw(rlist)))
 
     def write_reg(self, reg, val):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.write_reg(reg.lower(), val)
         else:
             self.xlk.write_core_register_raw(reg, val)
@@ -167,19 +176,19 @@ class XLink(object):
         self.xlk.step()
 
     def go(self):
-        if isinstance(self.xlk, jlink.JLink):
+        if hasattr(self.xlk, 'go'):     # OpenOCD 和 pyocd 叫 resume
             self.xlk.go()
         else:
             self.xlk.resume()
 
     def halted(self):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             return self.xlk.halted()
         else:
             return self.xlk.is_halted()
 
     def close(self):
-        if isinstance(self.xlk, (jlink.JLink, openocd.OpenOCD)):
+        if isinstance(self.xlk, DIRECT):
             self.xlk.close()
         else:
             self.xlk.ap.dp.link.close()
@@ -207,8 +216,8 @@ class XLink(object):
             cpuid = self.read_U32(CPUID)
 
             core_type = (cpuid & CPUID_PARTNO_Msk) >> CPUID_PARTNO_Pos
-            
-            return self.CORE_TYPE_NAME[core_type]
+
+            return self.CORE_TYPE_NAME.get(core_type, f'未知内核 (CPUID 0x{cpuid:08X})')
 
         elif self.mode.startswith('rv'):
             halted = self.halted()
