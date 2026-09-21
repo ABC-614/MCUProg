@@ -49,12 +49,24 @@ LOG_PACKET_BUILDS = False
 
 def _get_interfaces():
     """Get the connected USB devices"""
+    # A failure of one backend must not hide the probes found by the other one, so each scan is
+    # isolated: a broken/exotic USB device on the machine would otherwise make every CMSIS-DAP
+    # probe disappear.
+
     # Get CMSIS-DAPv1 interfaces.
-    v1_interfaces = INTERFACE[USB_BACKEND].get_all_connected_interfaces()
-    
+    try:
+        v1_interfaces = INTERFACE[USB_BACKEND].get_all_connected_interfaces()
+    except Exception as exc:
+        logging.getLogger(__name__).debug("CMSIS-DAPv1 scan failed: %s", exc)
+        v1_interfaces = []
+
     # Get CMSIS-DAPv2 interfaces.
-    v2_interfaces = INTERFACE[USB_BACKEND_V2].get_all_connected_interfaces()
-    
+    try:
+        v2_interfaces = INTERFACE[USB_BACKEND_V2].get_all_connected_interfaces()
+    except Exception as exc:
+        logging.getLogger(__name__).debug("CMSIS-DAPv2 scan failed: %s", exc)
+        v2_interfaces = []
+
     # Prefer v2 over v1 if a device provides both.
     devices_in_both = [v1 for v1 in v1_interfaces for v2 in v2_interfaces
                         if _get_unique_id(v1) == _get_unique_id(v2)]

@@ -93,9 +93,9 @@ class DebugPort(object):
         self.logger.addHandler(memHandler)
         self.logger.setLevel(logging.DEBUG)
 
-    def init(self):
-        # Connect to the target.
-        self.link.connect()
+    def init(self, protocol=None):
+        # Connect to the target. protocol selects SWD or JTAG, None lets the probe use its default.
+        self.link.connect(protocol)
         self.link.swj_sequence()
         try:
             self.read_id_code()

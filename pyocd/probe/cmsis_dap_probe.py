@@ -90,13 +90,9 @@ class CMSISDAPProbe(DebugProbe):
         
     @property
     def description(self):
-        try:
-            board_id = self.unique_id[0:4]
-            board_info = BOARD_ID_TO_INFO[board_id]
-        except KeyError:
-            return self.vendor_name + " " + self.product_name
-        else:
-            return "{0} [{1}]".format(board_info.name, board_info.target)
+        # The board database (BOARD_ID_TO_INFO) is not part of this stripped-down pyocd copy,
+        # so the probe is described by its USB strings only.
+        return self.vendor_name + " " + self.product_name
     
     @property
     def vendor_name(self):

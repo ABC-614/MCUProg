@@ -31,8 +31,10 @@ log = logging.getLogger('pywinusb')
 try:
     import pywinusb.hid as hid
 except:
+    # Only one HID backend is needed; hidapi is used by default on Windows, so a missing
+    # pywinusb is not an error worth reporting to the user.
     if os.name == "nt":
-        log.error("PyWinUSB is required on a Windows Machine")
+        log.debug("PyWinUSB is not installed, the pywinusb backend is unavailable")
     IS_AVAILABLE = False
 else:
     IS_AVAILABLE = True

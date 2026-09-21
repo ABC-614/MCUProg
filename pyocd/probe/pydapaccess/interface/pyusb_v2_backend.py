@@ -299,13 +299,16 @@ def _match_cmsis_dap_v2_interface(interface):
         # All checks passed, this is a CMSIS-DAPv2 interface!
         return True
 
-    except (UnicodeDecodeError, IndexError):
+    except (UnicodeDecodeError, IndexError, ValueError, usb.core.USBError):
         # UnicodeDecodeError exception can be raised if the device has a corrupted interface name.
         # Certain versions of STLinkV2 are known to have this problem. If we can't read the
         # interface name, there's no way to tell if it's a CMSIS-DAPv2 interface.
         #
         # IndexError can be raised if an endpoint is missing.
-        print()
+        #
+        # ValueError is raised by usb.util.get_string() for devices without a langid, e.g. devices
+        # that have no string descriptors at all. Those are never CMSIS-DAPv2, but letting the
+        # exception escape would abort the scan of every remaining USB device.
         return False
 
 class HasCmsisDapv2Interface(object):
@@ -344,7 +347,7 @@ class HasCmsisDapv2Interface(object):
                 LOG.debug("Error accessing USB device (VID=%04x PID=%04x): %s",
                     dev.idVendor, dev.idProduct, error)
             return False
-        except (IndexError, NotImplementedError) as error:
+        except (IndexError, NotImplementedError, ValueError) as error:
             LOG.debug("Error accessing USB device (VID=%04x PID=%04x): %s", dev.idVendor, dev.idProduct, error)
             return False
 
