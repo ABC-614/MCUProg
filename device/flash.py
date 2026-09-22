@@ -21,7 +21,13 @@ class Flash(object):
         self.aborted = aborted or (lambda: False)
 
         # perform a reset and stop the core on the reset handler
-        self.xlink.reset_and_halt()
+        try:
+            self.xlink.reset_and_halt()
+
+        except Exception as e:
+            raise Exception(f'复位并停住目标核失败（{e}）。'
+                            f'烧写前必须把核停在复位处，这一步过不去通常是调试模式或速度不合适、'
+                            f'复位脚没接上，或者目标芯片上了读保护')
 
         self.check_ram()
 
