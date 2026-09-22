@@ -11,11 +11,48 @@ import time
 import struct
 import zlib
 import socket
+import ssl
+import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
 
 BASE = 'https://www.keil.com/pack/'
+
+''' 用户明确放行过证书的主机。只在本次运行内有效，不落盘——
+    下次再下还得再点一次头 '''
+TRUSTED = set()
+
+
+class CertExpired(Exception):
+    ''' 站点的 HTTPS 证书验不过。单独立一个异常，是因为这个错误用户点一下头就能过，
+        而别的错误（没这个文件之类）点头也没用，两者得分开处理 '''
+
+    def __init__(self, host, detail):
+        super(CertExpired, self).__init__(f'{host} 的 HTTPS 证书验证不通过：{detail}')
+
+        self.host   = host
+        self.detail = detail
+
+
+def url_open(req, timeout=30):
+    ''' 证书验不过不默默放行：取回来的 .FLM 是要在目标芯片上跑的二进制，
+        跳过校验就等于没人担保它没在路上被换过。要放行，得用户自己说 '''
+    host = urllib.parse.urlsplit(req.full_url).hostname
+
+    try:
+        if host in TRUSTED:
+            return urllib.request.urlopen(req, timeout=timeout,
+                                          context=ssl._create_unverified_context())
+
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    except urllib.error.URLError as e:
+        if isinstance(getattr(e, 'reason', None), ssl.SSLCertVerificationError):
+            raise CertExpired(host, e.reason.verify_message or str(e.reason))
+
+        raise
 
 UA = {'User-Agent': 'Mozilla/5.0 (MCUProg)'}
 
@@ -32,8 +69,18 @@ def fetch(url, byte_range=None, timeout=30, retries=3):
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with url_open(req, timeout) as r:
                 return r.read(), r.status, r.headers
+
+        except CertExpired:
+            raise                       # 重试多少次都一样，等用户表态
+
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:     # 没有这个文件，重试多少次都是一样的结果
+                raise Exception(f'下载失败：{url}\nHTTP {e.code} {e.reason}')
+
+            last = e
+            time.sleep(0.5 * (attempt + 1))
 
         except Exception as e:
             last = e
@@ -44,14 +91,14 @@ def fetch(url, byte_range=None, timeout=30, retries=3):
 
 def content_length(url, timeout=30):
     req = urllib.request.Request(url, method='HEAD', headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with url_open(req, timeout) as r:
         return int(r.headers.get('Content-Length', 0))
 
 
 ''' ---------------- pdsc ---------------- '''
 
 
-def load_pdsc(pack, progress=None, refresh=False):
+def load_pdsc(pack, progress=None, refresh=False, base=None):
     ''' pack 形如 Keil.STM32F4xx_DFP。返回 (ElementTree 根, 版本号) '''
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, f'{pack}.pdsc')
@@ -59,7 +106,9 @@ def load_pdsc(pack, progress=None, refresh=False):
     if refresh or not os.path.exists(path):
         if progress: progress(f'下载 {pack}.pdsc …')
 
-        data, status, _ = fetch(f'{BASE}{pack}.pdsc')
+        data = try_sources(pack_sources(pack, base, progress)[0],
+                           lambda src: fetch(f'{src}{pack}.pdsc')[0], progress)
+
         with open(path, 'wb') as f:
             f.write(data)
 
@@ -69,6 +118,29 @@ def load_pdsc(pack, progress=None, refresh=False):
     version = release.get('version') if release is not None else None
 
     return root, version
+
+
+def try_sources(sources, grab, progress=None):
+    ''' 挨个源试过去。全都不行时优先报证书问题——那个用户点个头就能解决，
+        而排在后面的源多半只是"根本没有这个文件"，报出来没用 '''
+    cert = None
+
+    for i, src in enumerate(sources):
+        try:
+            return grab(src)
+
+        except CertExpired as e:
+            cert = cert or e
+
+            if progress: progress(f'{src} 取不到：{e}')
+
+        except Exception as e:
+            if progress: progress(f'{src} 取不到：{e}')
+
+            if i == len(sources) - 1 and cert is None:
+                raise
+
+    raise cert or Exception('没有可用的下载源')
 
 
 def is_ram(mem):
@@ -86,14 +158,9 @@ def is_rom(mem):
     return (mem.get('id') or '').upper().startswith('IROM')
 
 
-def find_device(root, prefix, flash_kb, flash_start=0x08000000):
-    ''' 在 pdsc 里找一个器件：名字以 prefix 开头、片上 Flash 总容量对得上。
-
-        几个坑：
-        - H7 的 Flash 拆成 FLASH_Bank1 + FLASH_Bank2 两块，要加起来算总容量；
-        - 算法条目的 size 是这个算法能覆盖的范围，不等于器件容量
-          （STM32F103C6 只有 32 KB，用的却是 STM32F10x_128.FLM），所以容量看 memory、算法看 algorithm；
-        - pdsc 是继承式的，memory/algorithm 可能写在 family 或 subFamily 上，要一路往上找。 '''
+def inherited(root):
+    ''' pdsc 是继承式的，memory/algorithm 可能写在 family 或 subFamily 上，
+        要一路往上找，所以先把父子关系建出来 '''
     parent = {child: node for node in root.iter() for child in node}
 
     def chain(node):
@@ -109,18 +176,38 @@ def find_device(root, prefix, flash_kb, flash_start=0x08000000):
             found += [el for el in node if el.tag == tag]
         return found
 
-    best = None
+    return collect
+
+
+def device_entries(root, prefix=None):
+    ''' 列出 pdsc 里所有带片上 Flash 烧写算法的器件。
+
+        几个坑：
+        - Flash 基址各家不一样：ST/GD32/N32 在 0x08000000，HC32 在 0x00000000，
+          所以基址得从器件自己的 memory 里取，不能写死；
+        - H7 的 Flash 拆成 FLASH_Bank1 + FLASH_Bank2 两块，要加起来算总容量；
+        - 算法条目的 size 是这个算法能覆盖的范围，不等于器件容量
+          （STM32F103C6 只有 32 KB，用的却是 STM32F10x_128.FLM），
+          所以容量看 memory、算法看 algorithm。 '''
+    collect = inherited(root)
+
     for dev in root.iter('device'):
-        name = dev.get('Dname', '')
-        if not name.startswith(prefix):
+        name = dev.get('Dname') or ''
+        if not name:
+            continue
+        if prefix and not name.upper().startswith(prefix.upper()):
             continue
 
         memories = collect(dev, 'memory')
 
-        total = sum(int(m.get('size'), 0) for m in memories
-                    if is_rom(m) and flash_start <= int(m.get('start'), 0) < flash_start + 0x2000000)
-        if total != flash_kb * 1024:
+        roms = [m for m in memories if is_rom(m)]
+        if not roms:
             continue
+
+        ''' 片上主 Flash 取基址最低的那块，同一片区内的多个 bank 累加 '''
+        flash_start = min(int(m.get('start'), 0) for m in roms)
+        total = sum(int(m.get('size'), 0) for m in roms
+                    if flash_start <= int(m.get('start'), 0) < flash_start + 0x2000000)
 
         algos = [a for a in collect(dev, 'algorithm')
                  if int(a.get('start'), 0) == flash_start and a.get('default', '1') == '1']
@@ -137,13 +224,17 @@ def find_device(root, prefix, flash_kb, flash_start=0x08000000):
 
         else:
             rams = [m for m in memories if is_ram(m)]
-            ram = next((m for m in rams if int(m.get('start'), 0) >> 24 == 0x20), None) or (rams[0] if rams else None)
-            if ram is None:
+            if not rams:
                 continue
+
+            '''挑最大的一块。不能按文档顺序取第一块——有些 pack 把一小块辅助 RAM
+                排在前面，装不下算法；也不能认死 0x20000000 段——HC32F460 的主 SRAM
+                在 0x1FFF8000，0x200F0000 反倒是块 4 KB 的小 RAM '''
+            ram = max(rams, key=lambda m: int(m.get('size'), 0))
 
             ram_start, ram_size = int(ram.get('start'), 0), int(ram.get('size'), 0)
 
-        candidate = {
+        yield {
             'name'       : name,
             'algorithm'  : algo.get('name').replace('\\', '/'),
             'flash_start': flash_start,
@@ -152,9 +243,20 @@ def find_device(root, prefix, flash_kb, flash_start=0x08000000):
             'ram_size'   : min(ram_size, 0x8000),   # 算法用不了那么多，给 32 KB 封顶
         }
 
+
+def find_device(root, prefix, flash_kb, flash_start=None):
+    ''' 在 pdsc 里找一个器件：名字以 prefix 开头、片上 Flash 总容量对得上 '''
+    best = None
+    for dev in device_entries(root, prefix):
+        if dev['flash_size'] != flash_kb * 1024:
+            continue
+
+        if flash_start is not None and dev['flash_start'] != flash_start:
+            continue
+
         ''' 同容量的器件有好几个封装，取名字最短的那个当代表 '''
-        if best is None or len(name) < len(best['name']):
-            best = candidate
+        if best is None or len(dev['name']) < len(best['name']):
+            best = dev
 
     return best
 
@@ -280,21 +382,108 @@ def zip64_sizes(extra, orig_size, comp_size, local_off):
     return comp_size, local_off
 
 
+''' ---------------- pack 索引 ---------------- '''
+
+''' 所有已发布 pack 的总目录，各家厂商都在里面——GigaDevice、Nations、
+    HDSC/XHSC 这些国产 MCU 的 pack 也是从这儿找 '''
+INDEX = 'https://www.keil.com/pack/index.pidx'
+
+INDEX_MAX_AGE = 7 * 24 * 3600
+
+
+def load_index(progress=None, refresh=False):
+    ''' 返回 [{vendor, name, pack, version, url}, ...]。索引不大（1 MB 上下），
+        缓存一周，过期或手动刷新时才重新下载 '''
+    say = progress or (lambda msg: None)
+
+    os.makedirs(CACHE, exist_ok=True)
+    path = os.path.join(CACHE, 'index.pidx')
+
+    stale = not os.path.exists(path) or time.time() - os.path.getmtime(path) > INDEX_MAX_AGE
+
+    if refresh or stale:
+        say('下载 pack 索引 …')
+
+        data, status, _ = fetch(INDEX, timeout=60)
+        with open(path, 'wb') as f:
+            f.write(data)
+
+    packs = []
+    for pdsc in ET.parse(path).getroot().iter('pdsc'):
+        vendor, name = pdsc.get('vendor'), pdsc.get('name')
+        if not vendor or not name:
+            continue
+
+        name = name[:-5] if name.lower().endswith('.pdsc') else name
+
+        packs.append({'vendor' : vendor,
+                      'name'   : name,
+                      'pack'   : f'{vendor}.{name}',
+                      'version': pdsc.get('version'),
+                      'url'    : pdsc.get('url')})
+
+    return packs
+
+
+def pack_index_entry(pack, progress=None):
+    ''' 在索引里查这个 pack 的登记信息，查不到（或索引拉不下来）返回 None '''
+    try:
+        return next((p for p in load_index(progress) if p['pack'] == pack), None)
+
+    except Exception as e:
+        if progress: progress(f'读 pack 索引失败：{e}')
+
+        return None
+
+
+def pack_sources(pack, url=None, progress=None):
+    ''' 一个 pack 该去哪儿下，按优先级排。
+
+        第三方 pack 在 keil.com 上只镜像了 .pdsc，.pack 本体得回厂商自己的服务器取
+        （NSING 在 nsing.com.sg，兆易在 gd32mcu.com，华大干脆放在 GitHub 上），
+        所以厂商源要排在 keil.com 前面。 '''
+    entry = pack_index_entry(pack, progress)
+
+    sources = [url, entry and entry['url'], BASE]
+    versions = [entry and entry['version']]
+
+    ''' 去重，保持顺序 '''
+    return (list(dict.fromkeys([s for s in sources if s])),
+            list(dict.fromkeys([v for v in versions if v])))
+
+
+def search_packs(keyword, packs=None, progress=None):
+    ''' 按关键字在厂商名和 pack 名里找。输入 N32G45 能找到 Nations.N32G45x_DFP，
+        输入 GD32 能把 GigaDevice 的一串 pack 都列出来 '''
+    packs = packs if packs is not None else load_index(progress)
+
+    key = keyword.strip().upper()
+    if not key:
+        return []
+
+    hit = [p for p in packs if key in p['pack'].upper()]
+
+    ''' 型号越长越具体的排前面，同名的按厂商字母序 '''
+    hit.sort(key=lambda p: (not p['name'].upper().startswith(key), p['pack']))
+
+    return hit
+
+
+def list_devices(pack, url=None, progress=None, refresh=False):
+    ''' 列出一个 pack 里所有带烧写算法的器件，返回 (器件表, pack 版本号) '''
+    root, version = load_pdsc(pack, progress, refresh, base=url)
+
+    devices = sorted(device_entries(root), key=lambda d: d['name'])
+
+    return devices, version
+
+
 ''' ---------------- 对外 ---------------- '''
 
 
-def download_algorithm(pack, prefix, flash_kb, algo_dir, progress=None):
-    ''' 按 系列pack + 器件名前缀 + Flash 容量 找到算法并下载到 algo_dir。
-        返回 dict：name / path / ram_start / ram_size / flash_start / flash_size '''
+def grab_algorithm(pack, version, dev, algo_dir, url=None, progress=None):
+    ''' 把 dev 指定的那个 .FLM 取下来，返回补上 path 字段的 dev '''
     say = progress or (lambda msg: None)
-
-    root, version = load_pdsc(pack, say)
-
-    dev = find_device(root, prefix, flash_kb)
-    if dev is None:
-        raise Exception(f'{pack} 里没有找到 {prefix}* 且 Flash 为 {flash_kb} KB 的器件')
-
-    say(f'匹配到 {dev["name"]}，算法 {dev["algorithm"]}')
 
     os.makedirs(algo_dir, exist_ok=True)
     path = os.path.join(algo_dir, os.path.basename(dev['algorithm']))
@@ -307,9 +496,16 @@ def download_algorithm(pack, prefix, flash_kb, algo_dir, progress=None):
 
         return dev
 
-    url = f'{BASE}{pack}.{version}.pack'
+    sources, versions = pack_sources(pack, url, say)
 
-    data = remote_zip_member(url, dev['algorithm'], say)
+    ''' pdsc 里写的版本和索引里登记的偶尔对不上（本地 pdsc 缓存旧了），两个都试 '''
+    versions = list(dict.fromkeys([v for v in [version] + versions if v]))
+
+    def grab(src):
+        return try_sources([f'{src}{pack}.{v}.pack' for v in versions],
+                           lambda u: remote_zip_member(u, dev['algorithm'], say))
+
+    data = try_sources(sources, grab, say)
 
     with open(path, 'wb') as f:
         f.write(data)
@@ -321,12 +517,53 @@ def download_algorithm(pack, prefix, flash_kb, algo_dir, progress=None):
     return dev
 
 
+def download_algorithm(pack, prefix, flash_kb, algo_dir, url=None, flash_start=None, progress=None):
+    ''' 按 系列pack + 器件名前缀 + Flash 容量 找到算法并下载到 algo_dir。
+        返回 dict：name / path / ram_start / ram_size / flash_start / flash_size '''
+    say = progress or (lambda msg: None)
+
+    root, version = load_pdsc(pack, say, base=url)
+
+    dev = find_device(root, prefix, flash_kb, flash_start)
+    if dev is None:
+        raise Exception(f'{pack} 里没有找到 {prefix}* 且 Flash 为 {flash_kb} KB 的器件')
+
+    say(f'匹配到 {dev["name"]}，算法 {dev["algorithm"]}')
+
+    return grab_algorithm(pack, version, dev, algo_dir, url, say)
+
+
+def download_algorithm_named(pack, dname, algo_dir, url=None, progress=None):
+    ''' 按 pdsc 里的器件全名取算法，给"搜索型号"那条路用 '''
+    say = progress or (lambda msg: None)
+
+    root, version = load_pdsc(pack, say, base=url)
+
+    dev = next((d for d in device_entries(root) if d['name'] == dname), None)
+    if dev is None:
+        raise Exception(f'{pack} 里没有器件 {dname}')
+
+    say(f'{dev["name"]}，算法 {dev["algorithm"]}')
+
+    return grab_algorithm(pack, version, dev, algo_dir, url, say)
+
+
 if __name__ == '__main__':
     import sys
 
-    pack, prefix, kb = (sys.argv + ['Keil.STM32F4xx_DFP', 'STM32F407', '512'])[1:4]
+    algo_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'FlashAlgo')
 
-    info = download_algorithm(pack, prefix, int(kb),
-                              os.path.join(os.path.dirname(os.path.abspath(__file__)), 'FlashAlgo'),
-                              progress=print)
-    print(info)
+    if len(sys.argv) > 1 and sys.argv[1] == 'search':
+        for p in search_packs(sys.argv[2], progress=print)[:40]:
+            print(f'{p["pack"]:<48} {p["version"]:<12} {p["url"]}')
+
+    elif len(sys.argv) > 1 and sys.argv[1] == 'devices':
+        devices, version = list_devices(sys.argv[2], progress=print)
+        print(f'{sys.argv[2]} {version}：{len(devices)} 个器件')
+        for d in devices:
+            print(f'  {d["name"]:<24} 0x{d["flash_start"]:08X} + {d["flash_size"]//1024:>5} KB  {d["algorithm"]}')
+
+    else:
+        pack, prefix, kb = (sys.argv + ['Keil.STM32F4xx_DFP', 'STM32F407', '512'])[1:4]
+
+        print(download_algorithm(pack, prefix, int(kb), algo_dir, progress=print))
