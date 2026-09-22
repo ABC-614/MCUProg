@@ -622,6 +622,16 @@
          </widget>
         </item>
         <item>
+         <widget class="QPushButton" name="btnPeriph">
+          <property name="toolTip">
+           <string>按 SVD 里的定义查看外设寄存器和位域，省得翻手册算偏移</string>
+          </property>
+          <property name="text">
+           <string>外设</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QLabel" name="lblDebug">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">

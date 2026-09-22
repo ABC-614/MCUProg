@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QMessageBox, QFileDialog, QDi
 import jlink
 import xlink
 import chipid
+import svdfile
 import device
 import device.chip
 import device.flash
@@ -330,6 +331,240 @@ class SearchDialog(QDialog):
         self.accept()
 
 
+class SvdDialog(QDialog):
+    ''' 外设寄存器视图：照 SVD 里的定义列出外设、寄存器和位域，并读回当前值。
+
+        读外设寄存器是要落到真实硬件上的：读 USART_DAT 会把收到的字节从 FIFO 里取走，
+        读某些状态寄存器会清掉标志位。SVD 本该用 readAction 标明这些，可不少厂商
+        （NSING 这份就是）压根不写，所以 svdfile 按名字认了一批，默认不读——
+        真要看那一个，单独双击它。 '''
+
+    def __init__(self, parent, device, xlk):
+        super(SvdDialog, self).__init__(parent)
+
+        self.device = device
+        self.xlk    = xlk
+
+        self.setWindowTitle(f'外设寄存器 · {device.name}')
+        self.resize(960, 620)
+
+        lay = QtWidgets.QVBoxLayout(self)
+
+        head = QtWidgets.QHBoxLayout()
+        head.addWidget(QtWidgets.QLabel(f'{device.name}    {len(device.peripherals)} 个外设'))
+        head.addStretch(1)
+
+        self.btnRead = QtWidgets.QPushButton('读取')
+        self.btnRead.setEnabled(xlk is not None)
+        self.btnRead.clicked.connect(self.read_peripheral)
+        head.addWidget(self.btnRead)
+
+        lay.addLayout(head)
+
+        self.lblTip = QtWidgets.QLabel(
+            '读外设寄存器会落到真实硬件上：读数据寄存器会把 FIFO 里的字节取走，'
+            '读某些状态寄存器会清掉标志。名字像数据寄存器的默认不读，双击那一行才读。'
+            if xlk is not None else
+            '没有连接目标，只能看定义，读不到当前值。先到调试面板点"连接"，再打开这个窗口。')
+        self.lblTip.setWordWrap(True)
+        self.lblTip.setStyleSheet('color: palette(dark)')
+        lay.addWidget(self.lblTip)
+
+        split = QtWidgets.QHBoxLayout()
+
+        left = QtWidgets.QVBoxLayout()
+
+        self.edtFilter = QtWidgets.QLineEdit()
+        self.edtFilter.setPlaceholderText('过滤外设，如 GPIO')
+        self.edtFilter.textChanged.connect(self.fill_peripherals)
+        left.addWidget(self.edtFilter)
+
+        self.lstPeriph = QtWidgets.QListWidget()
+        self.lstPeriph.currentItemChanged.connect(self.pick_peripheral)
+        left.addWidget(self.lstPeriph)
+
+        split.addLayout(left, 1)
+
+        right = QtWidgets.QVBoxLayout()
+
+        self.tblRegs = self.table(['寄存器', '地址', '值', '权限', '说明'], [150, 90, 100, 80])
+        self.tblRegs.currentCellChanged.connect(lambda r, c, pr, pc: self.show_fields())
+        self.tblRegs.cellDoubleClicked.connect(self.force_read)
+        right.addWidget(self.tblRegs, 3)
+
+        self.tblFields = self.table(['位', '位域', '值', '含义'], [60, 150, 90])
+        right.addWidget(self.tblFields, 2)
+
+        split.addLayout(right, 3)
+
+        lay.addLayout(split, 1)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+
+        btnClose = QtWidgets.QPushButton('关闭')
+        btnClose.clicked.connect(self.accept)
+        row.addWidget(btnClose)
+
+        lay.addLayout(row)
+
+        self.fill_peripherals()
+
+    def table(self, headers, widths):
+        tbl = QtWidgets.QTableWidget(0, len(headers))
+        tbl.setHorizontalHeaderLabels(headers)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        tbl.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        tbl.horizontalHeader().setStretchLastSection(True)
+        tbl.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 6)
+
+        for i, width in enumerate(widths):
+            tbl.setColumnWidth(i, width)
+
+        return tbl
+
+    def fill_peripherals(self):
+        key = self.edtFilter.text().strip().upper()
+
+        self.lstPeriph.clear()
+        for peripheral in self.device.peripherals:
+            if key and key not in peripheral.name.upper() and key not in (peripheral.group or '').upper():
+                continue
+
+            item = QtWidgets.QListWidgetItem(f'{peripheral.name}\n0x{peripheral.base:08X}')
+            item.setData(QtCore.Qt.UserRole, peripheral)
+            self.lstPeriph.addItem(item)
+
+    def peripheral(self):
+        item = self.lstPeriph.currentItem()
+
+        return item.data(QtCore.Qt.UserRole) if item else None
+
+    def pick_peripheral(self, item=None, previous=None):
+        peripheral = self.peripheral()
+
+        self.tblRegs.setRowCount(0)
+        self.tblFields.setRowCount(0)
+
+        if peripheral is None:
+            return
+
+        self.tblRegs.setRowCount(len(peripheral.registers))
+        for i, register in enumerate(peripheral.registers):
+            cell = QtWidgets.QTableWidgetItem(register.name)
+            cell.setData(QtCore.Qt.UserRole, register)
+
+            self.tblRegs.setItem(i, 0, cell)
+            self.tblRegs.setItem(i, 1, QtWidgets.QTableWidgetItem(f'0x{register.address:08X}'))
+            self.tblRegs.setItem(i, 2, QtWidgets.QTableWidgetItem(''))
+            self.tblRegs.setItem(i, 3, QtWidgets.QTableWidgetItem(register.access))
+            self.tblRegs.setItem(i, 4, QtWidgets.QTableWidgetItem(register.description.replace('\n', ' ')[:80]))
+
+        self.read_peripheral()
+
+    def read_one(self, register):
+        ''' 按寄存器宽度读。读不到就如实留空，不拿 0 冒充 '''
+        if register.size <= 8:
+            return self.xlk.read_mem_U8(register.address, 1)[0]
+
+        if register.size <= 16:
+            return self.xlk.read_mem_U16(register.address, 1)[0]
+
+        return self.xlk.read_U32(register.address)
+
+    def read_peripheral(self):
+        peripheral = self.peripheral()
+
+        if peripheral is None or self.xlk is None:
+            return
+
+        skipped = 0
+        for i in range(self.tblRegs.rowCount()):
+            register = self.tblRegs.item(i, 0).data(QtCore.Qt.UserRole)
+
+            if not register.readable:
+                self.set_value(i, '—', '只写')
+                continue
+
+            if register.sensitive:
+                skipped += 1
+                self.set_value(i, '未读', '读它会动到 FIFO／标志位，双击这一行才读')
+                continue
+
+            self.read_row(i, register)
+
+        if skipped:
+            self.lblTip.setText(f'{peripheral.name}：有 {skipped} 个寄存器读了会有副作用（数据寄存器之类），'
+                                f'默认没读。确实要看的话双击那一行。')
+
+        self.show_fields()
+
+    def read_row(self, row, register):
+        try:
+            value = self.read_one(register)
+
+        except Exception as e:
+            self.set_value(row, '?', f'读失败：{e}')
+
+            return
+
+        digits = max(register.size // 4, 2)
+
+        self.set_value(row, f'0x{value:0{digits}X}', '')
+
+        self.tblRegs.item(row, 0).setData(QtCore.Qt.UserRole + 1, value)
+
+    def set_value(self, row, text, tip):
+        cell = QtWidgets.QTableWidgetItem(text)
+        cell.setToolTip(tip)
+
+        if tip:
+            cell.setForeground(QtGui.QBrush(QtGui.QColor('#95a5a6')))
+
+        self.tblRegs.setItem(row, 2, cell)
+
+    def force_read(self, row, column):
+        ''' 双击那些默认不读的寄存器，明确要求读一次 '''
+        if self.xlk is None:
+            return
+
+        register = self.tblRegs.item(row, 0).data(QtCore.Qt.UserRole)
+
+        if not register.readable:
+            return
+
+        self.read_row(row, register)
+
+        self.show_fields()
+
+    def show_fields(self):
+        self.tblFields.setRowCount(0)
+
+        item = self.tblRegs.item(self.tblRegs.currentRow(), 0)
+        if item is None:
+            return
+
+        register = item.data(QtCore.Qt.UserRole)
+        value    = item.data(QtCore.Qt.UserRole + 1)
+
+        self.tblFields.setRowCount(len(register.fields))
+        for i, field in enumerate(register.fields):
+            self.tblFields.setItem(i, 0, QtWidgets.QTableWidgetItem(field.bits))
+            self.tblFields.setItem(i, 1, QtWidgets.QTableWidgetItem(field.name))
+
+            if value is None:
+                shown, meaning = '', ''
+            else:
+                raw     = field.extract(value)
+                shown   = f'0x{raw:X}' if field.width > 4 else str(raw)
+                meaning = field.explain(value)
+
+            self.tblFields.setItem(i, 2, QtWidgets.QTableWidgetItem(shown))
+            self.tblFields.setItem(i, 3, QtWidgets.QTableWidgetItem(
+                meaning or field.description.replace('\n', ' ')[:80]))
+
+
 class MCUProg(QWidget):
     chipinfo = ''
 
@@ -392,7 +627,7 @@ class MCUProg(QWidget):
             except Exception as e:
                 print(f'读取 setting.ini 失败：{e}')
 
-        for section in ('link', 'target', 'window', 'debug'):
+        for section in ('link', 'target', 'window', 'debug', 'svd'):
             if not self.conf.has_section(section):
                 self.conf.add_section(section)
 
@@ -1538,7 +1773,7 @@ class MCUProg(QWidget):
         self.btnConnect.setText('断开' if self.btnConnect.isChecked() else '连接')
 
         for widget in (self.btnReset, self.btnHalt, self.btnGo, self.btnStep,
-                       self.btnMemRead, self.btnMemWrite):
+                       self.btnPeriph, self.btnMemRead, self.btnMemWrite):
             widget.setEnabled(self.linked and self.btnConnect.isChecked() and not self.busy)
 
         self.btnConnect.setEnabled(not self.busy)
@@ -1617,6 +1852,64 @@ class MCUProg(QWidget):
             self.tblRegs.setItem(i, 1, QtWidgets.QTableWidgetItem(value))
 
         self.tblRegs.setColumnWidth(0, 80)
+
+    ''' 外设寄存器 '''
+
+    SVD_DIR = os.path.join(APP_DIR, 'FlashAlgo', '.packcache', 'svd')
+
+    @pyqtSlot()
+    def on_btnPeriph_clicked(self):
+        path = self.svd_file()
+        if not path:
+            return
+
+        try:
+            device = svdfile.load(path)
+
+        except Exception as e:
+            print(f'解析 {os.path.basename(path)} 失败：{e}')
+            self.alert('外设定义读不了', f'{os.path.basename(path)} 解析失败。', str(e))
+
+            return
+
+        SvdDialog(self, device, self.xlk if self.linked else None).exec_()
+
+    def svd_file(self):
+        ''' 当前型号词条对应的 .svd，没有就问要不要下 '''
+        entry = self.cmbMCU.currentText()
+
+        name = self.conf.get('svd', entry, fallback='')
+        if name:
+            path = os.path.join(self.SVD_DIR, name)
+            if os.path.exists(path):
+                return path
+
+        if not self.confirm('还没有外设定义',
+                            f'本地没有 {entry} 的 .svd。',
+                            '外设寄存器的名字和位域定义在器件包的 .svd 里，'
+                            '和烧写算法是同一个包。现在去下载吗？',
+                            QMessageBox.Yes):
+            return None
+
+        return self.fetch_svd(entry)
+
+    def fetch_svd(self, entry):
+        import cmsispack
+
+        dlg = SearchDialog(self, entry)
+        if dlg.exec_() != QDialog.Accepted or not dlg.chosen:
+            return None
+
+        pack, url, dev = dlg.chosen
+
+        path = self.net_call(cmsispack.download_svd, pack, dev['name'], self.SVD_DIR, url=url)
+        if path is None:
+            return None
+
+        ''' 记下映射：同一份 .svd 往往被一串型号共用，不必每个型号存一份 '''
+        self.conf.set('svd', entry, os.path.basename(path))
+
+        return path
 
     @pyqtSlot()
     def on_btnMemRead_clicked(self):

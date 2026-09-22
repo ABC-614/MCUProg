@@ -42,6 +42,28 @@ without programming anything:
   vector instead of letting the target run.
 - **core registers** — refreshed on every run-control action; shown as `—` while the core is running.
 - **memory** — read any address range as a hex dump, or write hex bytes to it.
+- **外设** — peripheral registers by name, from the device's `.svd`. See below.
+
+## peripheral registers
+
+The **外设** button in the debug panel lists every peripheral, its registers and their bit fields
+by name, decoded from the `.svd` that ships in the same device pack as the flash algorithm. It is
+fetched the same way — one member out of the pack over HTTP range requests — and cached in
+`FlashAlgo/.packcache/svd/`, with the mapping from 型号 to file kept in `setting.ini`. The SVD is
+parsed by `svdfile.py`; the `cmsis_svd` package is not needed.
+
+It replaces working out `GPIOA->POD` from the reference manual and then decoding a 32-bit word by
+hand: pick the peripheral, read, and each field is listed with its bit range, value and — where the
+SVD defines enumerated values — what that value means.
+
+Reads go to the real peripheral, and some of them have side effects: reading `USART_DAT` takes a
+received byte out of the FIFO, and some status registers clear flags on read. SVD has a
+`readAction` attribute for exactly this, but plenty of vendors never fill it in (NSING's N32G45x
+file has none at all), so registers whose name looks like a data register are **not read by
+default** — they show 未读, and double-clicking that row reads that one register. Write-only
+registers are never read.
+
+This is a read-only view. Writing a register is still done through the memory box.
 
 ## while programming
 

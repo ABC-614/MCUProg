@@ -533,6 +533,58 @@ def download_algorithm(pack, prefix, flash_kb, algo_dir, url=None, flash_start=N
     return grab_algorithm(pack, version, dev, algo_dir, url, say)
 
 
+def find_svd(root, dname):
+    ''' 器件的 .svd 在 pack 里的路径。<debug svd=...> 可能挂在器件上
+        （NSING、华大），也可能挂在 subFamily 上（Keil 的 STM32 包），所以要顺着
+        继承链往上找 '''
+    collect = inherited(root)
+
+    for dev in root.iter('device'):
+        if dev.get('Dname') != dname:
+            continue
+
+        for dbg in collect(dev, 'debug'):
+            if dbg.get('svd'):
+                return dbg.get('svd').replace('\\', '/')
+
+    return None
+
+
+def download_svd(pack, dname, out_dir, url=None, progress=None):
+    ''' 取器件的外设寄存器定义，返回本地路径 '''
+    say = progress or (lambda msg: None)
+
+    root, version = load_pdsc(pack, say, base=url)
+
+    member = find_svd(root, dname)
+    if member is None:
+        raise Exception(f'{pack} 里没有登记 {dname} 的 .svd')
+
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, os.path.basename(member))
+
+    if os.path.exists(path):
+        say(f'本地已有 {os.path.basename(path)}')
+
+        return path
+
+    sources, versions = pack_sources(pack, url, say)
+    versions = list(dict.fromkeys([v for v in [version] + versions if v]))
+
+    def grab(src):
+        return try_sources([f'{src}{pack}.{v}.pack' for v in versions],
+                           lambda u: remote_zip_member(u, member, say))
+
+    data = try_sources(sources, grab, say)
+
+    with open(path, 'wb') as f:
+        f.write(data)
+
+    say(f'外设定义已保存：{os.path.basename(path)}（{len(data)//1024} KB）')
+
+    return path
+
+
 def download_algorithm_named(pack, dname, algo_dir, url=None, progress=None):
     ''' 按 pdsc 里的器件全名取算法，给"搜索型号"那条路用 '''
     say = progress or (lambda msg: None)
