@@ -61,32 +61,72 @@ without programming anything:
   address in `devices.txt` (the default `0x20000000` / 4 KB does not fit every chip) used to make
   the algorithm silently run off into the weeds and nothing would erase or program; now it stops
   with a message naming the address.
-- On connect, the core type and — for STM32 and compatible parts such as GD32 and AT32 — the
-  `DBGMCU_IDCODE` are printed to the log, so a wrong 型号 is easy to spot. The FLM's own device
-  name is shown next to the chip geometry at the top of the window.
+- On connect, the core type and whatever the chip says about itself are printed to the log, so a
+  wrong 型号 is easy to spot. The FLM's own device name is shown next to the chip geometry at the
+  top of the window.
 
 ![](./%E6%88%AA%E5%9B%BE.jpg)
 
-## identify the chip automatically
+## pick the debug probe first, then identify the chip
 
-The **识别** button next to the 型号 box connects to the target (without downloading the flash
-algorithm, so nothing on the board is reset or halted) and reads the chip's own identification
-registers: the Cortex-M `CPUID`, `DBGMCU_IDCODE`, the flash size register and the UID. This works
-on STM32 and on the parts that copy its register map, such as GD32 and AT32.
+The 调试接口 box now sits **above** 目标芯片: you pick the probe, mode and speed first, and identify
+the chip from there. Identification no longer depends on whichever 型号 happens to be selected —
+that entry is usually for some other chip, and if it were a RISC-V one the probe would not even
+open. A generic core name matching the selected mode is passed to the probe instead.
 
-If `devices.txt` already has an entry for that chip, it is selected automatically. Matching needs
-both the flash geometry **and** the family to agree — STM32F103RC and STM32F407VE are both 512 KB
-at `0x08000000` but their algorithms are not interchangeable, and picking the wrong one would
-damage the chip.
+The **识别** button connects to the target (without downloading the flash algorithm, so nothing on
+the board is reset or halted) and reads the chip's own identification registers: the Cortex-M
+`CPUID`, the vendor's ID register, the flash size register and the UID.
 
-If there is no matching entry, MCUProg offers to fetch one from Keil's CMSIS-Pack server. It reads
-the family's `.pdsc`, finds a device with the same flash size, and pulls just that one `.FLM` out
-of the pack using HTTP range requests — a few kilobytes instead of the whole pack, which can be
-50 MB. The algorithm is written to `FlashAlgo/` (never overwriting a file that is already there)
-and a line with the correct RAM address and size is appended to `devices.txt`.
+Identification is rule based and **lists every reading that makes sense** instead of guessing:
 
-Downloaded `.pdsc` files are cached in `FlashAlgo/.packcache/`. Nothing is sent to the server
-beyond the plain file requests, and the download only happens when you confirm it.
+- **ST, and the parts that copy its register map** (GD32, AT32): `DBGMCU_IDCODE`, low 12 bits are
+  the device ID. Several vendors share the same IDs while their algorithms are *not*
+  interchangeable, so when the revision field is not one of ST's own, an ST candidate *and* a
+  compatible-vendor candidate are both offered and you pick. `REV 0x1303`, for instance, is
+  GigaDevice.
+- **Nations N32**: `DBG_ID` is at the same address as ST's `DBGMCU_IDCODE` (`0xE0042000`) but the
+  fields are scattered — device number across bits [15:12]/[11:8]/[23:20], flash size in [19:16],
+  SRAM size in [31:28]. Read as an STM32 ID, the low 12 bits are really "device number middle
+  nibble + revision" and can collide with a genuine STM32 device ID, so the N32 rule is tried
+  **first**.
+- Anything else falls through to 搜索型号 below.
+
+Only a single unambiguous result is applied without asking. Everything else opens a dialog showing
+the raw readout and each candidate with the reason for it. Picking the wrong algorithm erases the
+chip with the wrong sector layout, so this is not a decision the program makes on a hunch.
+
+If `devices.txt` already has a usable entry it is selected automatically. Matching needs the flash
+base, the size **and** the part number to agree — STM32F103RC and STM32F407VE are both 512 KB at
+`0x08000000` but their algorithms are not interchangeable.
+
+## 搜索型号 — find an algorithm by part number
+
+Chips whose ID register is not at a known location — HC32 among them — cannot be identified that
+way at all. The **搜索型号** button covers them: it downloads Keil's pack index (~1800 packs, cached
+for a week), searches it by part number or vendor, lists the devices in whichever pack you pick,
+and pulls just that one `.FLM` out of it.
+
+The domestic vendors are all in that index: `NSING.N32G45x_DFP` (Nations is listed as NSING),
+`GigaDevice.GD32F10x_DFP`, `HDSC.HC32F460` and so on.
+
+The `.FLM` is fetched with HTTP range requests — a few kilobytes instead of the whole pack, which
+can be 50 MB. keil.com only mirrors the `.pdsc`; the pack itself is served by the vendor
+(`nsing.com.sg`, `gd32mcu.com`, GitHub for HDSC), so the vendor's server is tried first and
+keil.com is the fallback.
+
+The flash base comes from the device's own memory map instead of being assumed to be `0x08000000`
+— HC32 puts its flash at `0x00000000`. The RAM block for the algorithm is the largest one the pack
+declares, and where the chip reports its own SRAM size (N32 does) that figure wins, because some
+packs under-declare it: NSING's `.pdsc` gives N32G451CC 6 KB while the 128 KB part in the same
+family gets 48 KB.
+
+If a vendor's certificate does not verify — GigaDevice's pack server has been serving an expired
+one — the download stops and asks. It is not waved through silently: the `.FLM` is a binary that
+will be executed on your target.
+
+Downloaded `.pdsc` files and the pack index are cached in `FlashAlgo/.packcache/`. Nothing is sent
+to the server beyond the plain file requests, and a download only happens when you confirm it.
 
 ## add new chip
 ### Simple method

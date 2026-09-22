@@ -11,7 +11,7 @@ import traceback
 
 from PyQt5 import QtCore, QtGui, QtWidgets, uic
 from PyQt5.QtCore import pyqtSlot, pyqtSignal, QThread
-from PyQt5.QtWidgets import QApplication, QWidget, QMessageBox, QFileDialog
+from PyQt5.QtWidgets import QApplication, QWidget, QMessageBox, QFileDialog, QDialog
 
 import jlink
 import xlink
@@ -65,6 +65,269 @@ class LogStream(QtCore.QObject):
         if self.stream:
             try: self.stream.flush()
             except Exception: pass
+
+
+class PickDialog(QDialog):
+    ''' 识别结果确认框：把读到的原始信息和所有讲得通的解释摆出来，由人拍板。
+
+        不替人猜是有道理的——ST 和 GD32 共用同一个 DEV_ID，烧写算法却不通用，
+        自动选错就是一次误擦。只有唯一且确定的结果才不弹这个框。 '''
+
+    def __init__(self, parent, info):
+        super(PickDialog, self).__init__(parent)
+
+        self.setWindowTitle('识别结果')
+        self.resize(600, 400)
+
+        self.cand   = None      # 选中的候选
+        self.search = None      # 改走"搜索型号"时带过去的关键字
+
+        lay = QtWidgets.QVBoxLayout(self)
+
+        head = QtWidgets.QLabel(self.readout(info))
+        head.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        lay.addWidget(head)
+
+        self.list = QtWidgets.QListWidget()
+        for cand in info['candidates']:
+            title = f'{cand["vendor"]}    {cand["name"]}'
+            if cand['flash_kb']:
+                title += f'    {cand["flash_kb"]} KB Flash'
+            if not cand['sure']:
+                title += '    （不确定）'
+
+            item = QtWidgets.QListWidgetItem(f'{title}\n{cand["why"]}')
+            item.setData(QtCore.Qt.UserRole, cand)
+            self.list.addItem(item)
+
+        self.list.setCurrentRow(0)
+        self.list.itemDoubleClicked.connect(lambda item: self.use())
+        lay.addWidget(self.list, 1)
+
+        for note in info['notes']:
+            tip = QtWidgets.QLabel(note)
+            tip.setWordWrap(True)
+            tip.setStyleSheet('color: #c0392b')
+            lay.addWidget(tip)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+
+        btnUse = QtWidgets.QPushButton('用选中的')
+        btnUse.setDefault(True)
+        btnUse.setEnabled(bool(info['candidates']))
+        btnUse.clicked.connect(self.use)
+        row.addWidget(btnUse)
+
+        btnFind = QtWidgets.QPushButton('搜索型号…')
+        btnFind.setToolTip('都不对，或者压根没认出来，就按型号直接去 pack 服务器上找')
+        btnFind.clicked.connect(self.find)
+        row.addWidget(btnFind)
+
+        btnCancel = QtWidgets.QPushButton('取消')
+        btnCancel.clicked.connect(self.reject)
+        row.addWidget(btnCancel)
+
+        lay.addLayout(row)
+
+    def readout(self, info):
+        ''' 读到什么就写什么，一行行摆出来给人核对 '''
+        lines = [f'内核：{info["core"] or "未知"}']
+
+        if info['idcode'] is not None:
+            lines.append(f'ID 寄存器：0x{info["idcode"]:08X}    '
+                         f'DEV_ID 0x{info["dev_id"]:03X}    REV 0x{info["rev"]:04X}')
+        if info['flash_kb']:
+            lines.append(f'Flash 容量寄存器：{info["flash_kb"]} KB')
+        if info['uid']:
+            lines.append(f'UID：{info["uid"]}')
+
+        return '\n'.join(lines)
+
+    def use(self):
+        item = self.list.currentItem()
+        if item is None:
+            return
+
+        self.cand = item.data(QtCore.Qt.UserRole)
+
+        ''' 这个候选本身就定位不到算法（比如只知道是"某个兼容厂商"），转去搜索 '''
+        if self.cand.get('search') or not self.cand['pack']:
+            self.search = self.cand.get('search') or self.cand['name']
+            self.cand   = None
+
+        self.accept()
+
+    def find(self):
+        self.search = ''
+        self.accept()
+
+
+class SearchDialog(QDialog):
+    ''' 按型号在 CMSIS-Pack 服务器上找烧写算法。
+
+        自动识别只认得把 ID 寄存器摆在已知位置的那些芯片，HC32 这类就没有。
+        国产 MCU 的覆盖主要靠这条路——各家的 pack 都在 Keil 的总索引里。 '''
+
+    def __init__(self, parent, keyword=''):
+        super(SearchDialog, self).__init__(parent)
+
+        self.setWindowTitle('搜索型号')
+        self.resize(720, 460)
+
+        self.chosen = None      # (pack, pack 服务器, 器件)
+
+        lay = QtWidgets.QVBoxLayout(self)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel('型号'))
+
+        self.edtKey = QtWidgets.QLineEdit(keyword)
+        self.edtKey.setPlaceholderText('N32G45 / GD32F103 / HC32F460 / STM32F407 …')
+        self.edtKey.returnPressed.connect(self.find_packs)
+        row.addWidget(self.edtKey, 1)
+
+        btnFind = QtWidgets.QPushButton('搜索')
+        btnFind.setDefault(True)
+        btnFind.clicked.connect(self.find_packs)
+        row.addWidget(btnFind)
+
+        lay.addLayout(row)
+
+        split = QtWidgets.QHBoxLayout()
+
+        left = QtWidgets.QVBoxLayout()
+        left.addWidget(QtWidgets.QLabel('器件包'))
+        self.lstPacks = QtWidgets.QListWidget()
+        self.lstPacks.currentItemChanged.connect(self.load_pack)
+        left.addWidget(self.lstPacks)
+        split.addLayout(left, 2)
+
+        right = QtWidgets.QVBoxLayout()
+        right.addWidget(QtWidgets.QLabel('器件'))
+        self.lstDevs = QtWidgets.QListWidget()
+        self.lstDevs.itemDoubleClicked.connect(lambda item: self.use())
+        right.addWidget(self.lstDevs)
+        split.addLayout(right, 3)
+
+        lay.addLayout(split, 1)
+
+        self.lblTip = QtWidgets.QLabel('')
+        self.lblTip.setWordWrap(True)
+        self.lblTip.setStyleSheet('color: palette(dark)')
+        lay.addWidget(self.lblTip)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+
+        btnUse = QtWidgets.QPushButton('用这个')
+        btnUse.clicked.connect(self.use)
+        row.addWidget(btnUse)
+
+        btnCancel = QtWidgets.QPushButton('取消')
+        btnCancel.clicked.connect(self.reject)
+        row.addWidget(btnCancel)
+
+        lay.addLayout(row)
+
+        if keyword:
+            QtCore.QTimer.singleShot(0, self.find_packs)
+
+    def net(self, func, *args, **kwargs):
+        ''' 联网的活儿都不快，给个等待光标，顺带让日志刷得出来 '''
+        QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            return func(*args, progress=self.say, **kwargs)
+
+        except Exception as e:
+            print(f'{func.__name__} 失败：{e}')
+            self.lblTip.setText(f'出错了：{e}')
+
+            return None
+
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def say(self, message):
+        print(message)
+
+        self.lblTip.setText(message)
+
+        QApplication.processEvents()    # 下载期间界面不至于假死
+
+    def find_packs(self):
+        import cmsispack
+
+        key = self.edtKey.text().strip()
+        if not key:
+            return
+
+        self.lstPacks.clear()
+        self.lstDevs.clear()
+
+        packs = self.net(cmsispack.search_packs, key)
+        if packs is None:
+            return
+
+        for pack in packs:
+            item = QtWidgets.QListWidgetItem(f'{pack["pack"]}\n{pack["version"]}')
+            item.setData(QtCore.Qt.UserRole, pack)
+            self.lstPacks.addItem(item)
+
+        self.say(f'{key}：找到 {len(packs)} 个器件包' if packs else
+                 f'{key}：一个都没找到，换个写法试试（厂商名或型号前几位）')
+
+        if len(packs) == 1:
+            self.lstPacks.setCurrentRow(0)
+
+    def load_pack(self, item, previous=None):
+        import cmsispack
+
+        self.lstDevs.clear()
+
+        if item is None:
+            return
+
+        pack = item.data(QtCore.Qt.UserRole)
+
+        got = self.net(cmsispack.list_devices, pack['pack'], url=pack['url'])
+        if got is None:
+            return
+
+        devices, version = got
+
+        key = self.edtKey.text().strip().upper()
+
+        ''' 一个 pack 动辄上百个器件，先把名字对得上的挑出来；一个都不剩就全列 '''
+        hit = [d for d in devices if key in d['name'].upper()] or devices
+
+        for dev in hit:
+            self.lstDevs.addItem(self.entry(dev, pack))
+
+        self.say(f'{pack["pack"]} {version}：{len(devices)} 个器件'
+                 + (f'，其中 {len(hit)} 个名字含 {key}' if len(hit) != len(devices) else ''))
+
+    def entry(self, dev, pack):
+        item = QtWidgets.QListWidgetItem(
+            f'{dev["name"]}\n'
+            f'Flash 0x{dev["flash_start"]:08X} + {dev["flash_size"] // 1024} KB    '
+            f'RAM 0x{dev["ram_start"]:08X} + {dev["ram_size"] // 1024} KB    '
+            f'{os.path.basename(dev["algorithm"])}')
+        item.setData(QtCore.Qt.UserRole, (pack, dev))
+
+        return item
+
+    def use(self):
+        item = self.lstDevs.currentItem()
+        if item is None:
+            self.lblTip.setText('先在右边选一个器件')
+            return
+
+        pack, dev = item.data(QtCore.Qt.UserRole)
+
+        self.chosen = (pack['pack'], pack['url'], dev)
+
+        self.accept()
 
 
 class MCUProg(QWidget):
@@ -221,6 +484,50 @@ class MCUProg(QWidget):
 
         self.txtLog.appendHtml(f'<span style="color:#95a5a6">{time.strftime("%H:%M:%S")}</span>  {text}')
 
+    ''' 消息框 '''
+
+    def message(self, *args, **kwargs):
+        return self.build_message(*args, **kwargs).exec_()
+
+    def build_message(self, icon, title, summary, detail='', buttons=QMessageBox.Ok, default=None):
+        ''' QMessageBox 的标签默认不折行，一条长错误能把窗口横着撑出屏幕——
+            那几个"畸形"的框就是这么来的。这里统一打开折行，再塞一根撑条把宽度定住
+            （Qt 没给 QMessageBox 设最小宽度的公开接口，只能往它的网格布局里加） '''
+        box = QMessageBox(icon, title, summary, buttons, self)
+
+        if detail:
+            box.setInformativeText(detail)
+
+        for label in box.findChildren(QtWidgets.QLabel):
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+
+        for std, text in ((QMessageBox.Ok, '确定'), (QMessageBox.Yes, '是'), (QMessageBox.No, '否')):
+            if box.button(std):
+                box.button(std).setText(text)
+
+        if default is not None:
+            box.setDefaultButton(default)
+
+        grid = box.layout()
+        grid.addItem(QtWidgets.QSpacerItem(440, 0, QtWidgets.QSizePolicy.Minimum),
+                     grid.rowCount(), 0, 1, grid.columnCount())
+
+        return box
+
+    def alert(self, title, summary, detail=''):
+        self.message(QMessageBox.Critical, title, summary, detail)
+
+    def warn(self, title, summary, detail=''):
+        self.message(QMessageBox.Warning, title, summary, detail)
+
+    def notice(self, title, summary, detail=''):
+        self.message(QMessageBox.Information, title, summary, detail)
+
+    def confirm(self, title, summary, detail='', default=QMessageBox.No):
+        return self.message(QMessageBox.Question, title, summary, detail,
+                            QMessageBox.Yes | QMessageBox.No, default) == QMessageBox.Yes
+
     ''' 连接 '''
 
     def device(self, name, xlink):
@@ -279,43 +586,78 @@ class MCUProg(QWidget):
             self.probeerror[kind] = message
             print(message)
 
-    def link_open(self, algo=True):
+    def link_open(self, algo=True, core=None):
         ''' algo 为 True 时顺便把烧写算法下载到目标 RAM（会复位并 halt 住核心），
-            纯调试用途传 False，只建立连接，不动目标程序 '''
+            纯调试用途传 False，只建立连接，不动目标程序。
+
+            core 见 probe_open：识别芯片时还不知道型号，得传个通用核名 '''
         try:
             if not self.linked:
-                self.xlk = xlink.XLink(self.probe_open())
+                self.xlk = xlink.XLink(self.probe_open(core))
 
                 self.linked = True
 
                 try:
                     print(f'Connected: {self.xlk.read_core_type()} @ {self.cmbSpeed.currentText()}')
 
-                    self.print_chip_id()
+                    print(f'目标芯片：{chipid.describe(chipid.identify(self.xlk))}')
 
                 except Exception as e:
                     print(f'读取芯片信息失败：{e}')
 
-            if algo:
-                self.dev = self.device(self.cmbMCU.currentText(), self.xlk)
-
         except Exception as e:
             print(f'连接失败：{e}')
-            QMessageBox.critical(self, '连接失败', str(e), QMessageBox.Yes)
+
+            self.alert('连接失败', '没能连上目标芯片。', str(e))
 
             self.link_close(force=True)
 
             return False
 
+        ''' 装载烧写算法是另一回事了：连接已经通了，是把算法搬进目标 RAM 这一步没过去。
+            以前这段和上面共用一个 try，一律报"连接失败"，把人往错的方向引——
+            真正要查的是 devices.txt 里那颗芯片的 RAM 地址和大小 '''
+        if algo:
+            try:
+                self.dev = self.device(self.cmbMCU.currentText(), self.xlk)
+
+            except Exception as e:
+                print(f'装载烧写算法失败：{e}')
+
+                self.alert('装载烧写算法失败',
+                           f'芯片已经连上了，是把烧写算法装进目标 RAM 这一步没过去。'
+                           f'{self.algo_hint()}',
+                           str(e))
+
+                self.link_close(force=True)
+
+                return False
+
         self.update_debug_state()
 
         return True
 
-    def probe_open(self):
-        ''' 按下拉框里选中的探测器建立底层连接 '''
+    def algo_hint(self):
+        ''' 出错时把当前词条的算法和 RAM 配置一并报出来，省得再去翻 devices.txt '''
+        dev = device.Devices.get(self.cmbMCU.currentText())
+
+        if not isinstance(dev, tuple):
+            return ''
+
+        name, addr, size, path = dev
+
+        return (f'\n\n当前词条 {name} 用的是 {os.path.basename(path)}，'
+                f'算法 RAM 配的是 0x{addr:08X} + {size // 1024} KB。')
+
+    def probe_open(self, core=None):
+        ''' 按下拉框里选中的探测器建立底层连接。
+
+            core 只有 J-Link 用得上（要告诉 DLL 接的是什么核）。识别芯片的时候还不知道
+            型号，调用方传个和调试模式对得上的通用核名即可——这时候去问当前选中的型号
+            没有意义，它多半和台面上这颗对不上，万一选中的是 RISC-V 词条就更连不上了 '''
         mode = self.cmbMode.currentText()
         mode = mode.replace('RISC-V', 'RV').replace(' SWD', '').replace(' cJTAG', '').replace(' JTAG', 'J').lower()
-        core = self.device(self.cmbMCU.currentText(), None).CHIP_CORE
+        core = core or self.device(self.cmbMCU.currentText(), None).CHIP_CORE
         speed= int(self.cmbSpeed.currentText().split()[0]) * 1000 # KHz
 
         item_data = self.cmbDLL.currentData()
@@ -345,68 +687,22 @@ class MCUProg(QWidget):
 
         daplink.open()
 
+        protocol = DebugProbe.Protocol.JTAG if mode == 'armj' else DebugProbe.Protocol.SWD
+
         _dp = dap.DebugPort(daplink, None)
-        _dp.init(DebugProbe.Protocol.JTAG if mode == 'armj' else DebugProbe.Protocol.SWD)
+        _dp.init(protocol)
         _dp.power_up_debug()
         _dp.set_clock(speed * 1000)
 
         _ap = ap.AHB_AP(_dp, 0)
         _ap.init()
 
-        return cortex_m.CortexM(None, _ap)
+        core = cortex_m.CortexM(None, _ap)
 
-    ''' STM32 及其兼容芯片（GD32、AT32 等）DBGMCU_IDCODE 低 12 位的型号编码 '''
-    DEV_IDS = {
-        0x410: 'STM32F101/102/103 中容量',  0x412: 'STM32F10x 小容量',
-        0x414: 'STM32F10x 大容量',          0x418: 'STM32F105/107',
-        0x420: 'STM32F100 中容量',          0x428: 'STM32F100 大容量',
-        0x430: 'STM32F10x 超大容量',        0x411: 'STM32F2xx',
-        0x413: 'STM32F405/407/415/417',     0x419: 'STM32F42x/43x',
-        0x421: 'STM32F446',                 0x423: 'STM32F401xB/C',
-        0x431: 'STM32F411',                 0x433: 'STM32F401xD/E',
-        0x434: 'STM32F469/479',             0x441: 'STM32F412',
-        0x458: 'STM32F410',                 0x463: 'STM32F413/423',
-        0x449: 'STM32F74x/75x',             0x451: 'STM32F76x/77x',
-        0x452: 'STM32F72x/73x',             0x440: 'STM32F030x8/F05x',
-        0x442: 'STM32F09x',                 0x444: 'STM32F03x',
-        0x445: 'STM32F04x',                 0x448: 'STM32F07x',
-        0x415: 'STM32L4x1/475/476/486',     0x435: 'STM32L43x/44x',
-        0x462: 'STM32L45x/46x',             0x464: 'STM32L41x/42x',
-        0x416: 'STM32L1xx',                 0x417: 'STM32L0xx',
-        0x450: 'STM32H742/743/750/753',     0x480: 'STM32H7A3/7B3',
-        0x483: 'STM32H72x/73x',             0x460: 'STM32G07x/G08x',
-        0x466: 'STM32G03x/G04x',            0x468: 'STM32G431/441',
-        0x469: 'STM32G47x/48x',             0x479: 'STM32G491/4A1',
-        0x482: 'STM32U575/585',             0x495: 'STM32WB55',
-        0x497: 'STM32WLE5',
-    }
+        ''' 复位会把调试端口一起带下电，重连时得用同一个协议，记在核对象上 '''
+        core.mcuprog_protocol = protocol
 
-    def print_chip_id(self):
-        ''' 读 DBGMCU_IDCODE。这是 ST 系（含 GD32/AT32 兼容芯片）才有的寄存器，
-            读不到就算了，只作提示用，不拿来拦截操作 '''
-        bases = [0xE0042000]
-        if self.xlk.read_core_type() in ('Cortex-M0', 'Cortex-M0+'):
-            bases.append(0x40015800)    # M0 系列的 DBGMCU 挂在外设总线上
-
-        for base in bases:
-            try:
-                idcode = self.xlk.read_U32(base)
-            except Exception:
-                continue
-
-            dev_id, rev = idcode & 0xFFF, (idcode >> 16) & 0xFFFF
-            if dev_id in (0x000, 0xFFF):
-                continue
-
-            name = self.DEV_IDS.get(dev_id, '未知型号')
-
-            print(f'DBGMCU_IDCODE 0x{idcode:08X}：DEV_ID 0x{dev_id:03X}（{name}），REV 0x{rev:04X}')
-
-            return dev_id
-
-        print('未读到 DBGMCU_IDCODE，这颗芯片可能没有这个寄存器')
-
-        return None
+        return core
 
     def link_close(self, force=False):
         if self.btnConnect.isChecked() and not force:
@@ -505,7 +801,7 @@ class MCUProg(QWidget):
         elif error:
             self.prgInfo.setValue(0)
             self.lblStatus.setText(f'{self.task}失败')
-            QMessageBox.critical(self, f'{self.task}失败', error, QMessageBox.Yes)
+            self.alert(f'{self.task}失败', error)
 
         else:
             self.prgInfo.setValue(100)
@@ -547,11 +843,11 @@ class MCUProg(QWidget):
         try:
             self.wrdata = self.load_write_data()
         except Exception as e:
-            QMessageBox.warning(self, '文件错误', str(e), QMessageBox.Yes)
+            self.warn('文件错误', str(e))
             return
 
         if not self.wrdata:
-            QMessageBox.warning(self, '没有文件', '没有勾选任何要烧写的文件', QMessageBox.Yes)
+            self.warn('没有文件', '没有勾选任何要烧写的文件')
             return
 
         self.task_bytes = sum(len(data) for addr, data in self.wrdata)
@@ -663,70 +959,137 @@ class MCUProg(QWidget):
 
         self.on_task_finished(error)
 
-    ''' 自动识别型号 '''
+    ''' 识别型号 '''
+
+    def generic_core(self):
+        ''' 识别阶段用的通用核名：这时候还不知道芯片是什么，只能按调试模式给个大路货 '''
+        return 'risc-v' if self.cmbMode.currentText().startswith('RISC-V') else 'Cortex-M3'
 
     @pyqtSlot()
     def on_btnDetect_clicked(self):
-        if not self.link_open(algo=False):      # 只连上，不下载算法、不复位目标
+        if not self.link_open(algo=False, core=self.generic_core()):    # 只连上，不下载算法、不复位目标
             return
 
         try:
             info = chipid.identify(self.xlk)
+
         except Exception as e:
             print(f'识别失败：{e}')
-            QMessageBox.critical(self, '识别失败', str(e), QMessageBox.Yes)
-            self.link_close()
+            self.alert('识别失败', str(e))
+
             return
+
+        finally:
+            self.link_close()
 
         print(f'识别结果：{chipid.describe(info)}')
+        for note in info['notes']:
+            print(note)
 
-        self.link_close()
+        self.take_candidate(info)
 
-        if not info['dev_id']:
-            QMessageBox.information(self, '没认出来', chipid.describe(info) +
-                                    '\n\n只有 STM32 以及兼容它的芯片（GD32、AT32 等）才有这组 ID 寄存器。',
-                                    QMessageBox.Yes)
+    def take_candidate(self, info):
+        ''' 定下用哪个候选。唯一且确定时直接用，其余一律摆出来让人选——
+            ST 和 GD32 共用 DEV_ID 而算法不通用，猜错就是一次误擦 '''
+        cands = info['candidates']
+
+        if len(cands) == 1 and cands[0]['sure'] and cands[0]['pack']:
+            cand = cands[0]
+
+        else:
+            dlg = PickDialog(self, info)
+            if dlg.exec_() != QDialog.Accepted:
+                return
+
+            if dlg.search is not None:
+                self.search_device(dlg.search)
+                return
+
+            cand = dlg.cand
+
+        if not cand:
             return
 
-        if not info['flash_kb']:
-            QMessageBox.warning(self, '识别完成',
-                                f'{chipid.describe(info)}\n\n没读到 Flash 容量，无法自动挑算法，请手动选型号。',
-                                QMessageBox.Yes)
+        if not cand['flash_kb']:
+            self.warn('缺 Flash 容量', f'{cand["name"]} 没读到 Flash 容量，没法自动挑算法。',
+                      '请用"搜索型号"按型号直接找，或手动选。')
             return
 
-        match, others = self.match_device(info)
+        match, others = self.match_device(cand)
         if match:
             self.cmbMCU.setCurrentIndex(self.cmbMCU.findText(match))
 
-            QMessageBox.information(self, '识别完成',
-                                    f'{chipid.describe(info)}\n\n已自动选中列表里的 {match}',
-                                    QMessageBox.Yes)
+            self.notice('识别完成', self.match_report(info, cand, match))
             return
 
         hint = ''
         if others:
-            hint = (f'\n\n（列表里的 {"、".join(others)} 容量一样，但不是 {info["family"]} 系列，'
+            hint = (f'\n\n（列表里的 {"、".join(others)} 容量一样，但型号对不上，'
                     f'算法不通用，不能拿来顶替。）')
 
-        if QMessageBox.question(self, '本地没有对应的算法',
-                                f'{chipid.describe(info)}\n\n'
-                                f'devices.txt 里没有属于 {info["family"]} 系列、'
-                                f'Flash 为 0x08000000 + {info["flash_kb"]} KB 的词条。{hint}\n\n'
-                                f'要不要从 Keil 的 CMSIS-Pack 服务器下载对应的烧写算法并加进去？',
-                                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) != QMessageBox.Yes:
+        if not self.confirm('本地没有对应的算法', chipid.describe(info),
+                            f'devices.txt 里没有 {cand["name"]} 这一类、'
+                            f'Flash 为 0x{cand["flash_start"]:08X} + {cand["flash_kb"]} KB 的词条。{hint}\n\n'
+                            f'要不要从 CMSIS-Pack 服务器下载对应的烧写算法并加进去？',
+                            QMessageBox.Yes):
             return
 
-        self.fetch_device(info)
+        self.fetch_device(cand)
 
-    def match_device(self, info):
+    def match_report(self, info, cand, match):
+        ''' 把"芯片报了什么"和"用了哪个词条"分开写。
+
+            芯片报得出系列、容量、SRAM 大小，报不出封装和引脚数——DBG_ID 里根本没有这些位。
+            所以词条名里的封装后缀只是这个算法在器件包里的标签，不是对台面上这颗的断言：
+            N32G455REL7 和 N32G455CEQ7 的烧写算法、Flash 布局、RAM 窗口完全一样。
+            原先那句"已自动选中 N32G455CEQ7"把两件事混在一起，看着就像认错了型号 '''
+        dev = device.Devices.get(match)
+
+        lines = [f'芯片报出：{chipid.describe(info)}', '', f'选用词条：{match}']
+
+        if isinstance(dev, tuple):
+            name, addr, size, path = dev
+
+            lines.append(f'算法：{os.path.basename(path)}，'
+                         f'算法 RAM 0x{addr:08X} + {size // 1024} KB')
+
+        lines += ['', '芯片报不出封装和引脚数，词条名里的后缀只是算法在器件包里的标签，'
+                      '不代表手上这颗就是它——同系列同容量的型号共用一个算法。']
+
+        warn = self.ram_warning(cand, dev)
+        if warn:
+            lines += ['', warn]
+
+        return '\n'.join(lines)
+
+    def ram_warning(self, cand, dev):
+        ''' 算法是下到 RAM 里跑的。芯片自报了 SRAM 大小时（N32 的 DBG_ID 带这一项），
+            核一下词条里那块 RAM 是不是真的存在——超出去算法一跑就飞。
+
+            这是识别阶段唯一能替人挡下来的错，封装认不出来则挡不了，也不必挡 '''
+        if not cand.get('sram_size') or not isinstance(dev, tuple):
+            return ''
+
+        name, addr, size, path = dev
+
+        low, high = cand['ram_start'], cand['ram_start'] + cand['sram_size']
+
+        if addr < low or addr + size > high:
+            return (f'注意：这条词条把算法放在 0x{addr:08X} + {size // 1024} KB，'
+                    f'而芯片自报的 SRAM 只有 0x{low:08X} + {cand["sram_size"] // 1024} KB。'
+                    f'算法下到不存在的 RAM 上会跑飞，请改 devices.txt 里这一行。')
+
+        return ''
+
+    def match_device(self, cand):
         ''' 在已有词条里找能用的算法。
 
             只比 Flash 起址和容量是不够的：STM32F103RC 和 STM32F407VE 都是 0x08000000 + 512 KB，
             但分属 F1 和 F4，算法完全不通用，认错了会直接擦坏芯片。所以容量对上之后，
-            还要求词条名属于识别出来的那个系列。
+            还要求词条名和识别出来的型号对得上。
 
-            返回 (确定能用的词条, 容量一样但系列不符的词条列表) '''
-        prefix = chipid.FAMILIES[info['family']][4].upper()
+            返回 (确定能用的词条, 容量一样但型号不符的词条列表) '''
+        prefix = (cand['prefix'] or cand['name']).upper()
 
         same_size = []
         for name in list(device.Devices):
@@ -735,7 +1098,7 @@ class MCUProg(QWidget):
             except Exception:
                 continue
 
-            if dev.CHIP_BASE == 0x08000000 and dev.CHIP_SIZE == info['flash_kb'] * 1024:
+            if dev.CHIP_BASE == cand['flash_start'] and dev.CHIP_SIZE == cand['flash_kb'] * 1024:
                 same_size.append(name)
 
         matched = [name for name in same_size if name.upper().startswith(prefix)]
@@ -743,29 +1106,101 @@ class MCUProg(QWidget):
 
         ''' 同系列里再挑型号号段也对得上的，比如 DEV_ID 0x413 认出的是 405/407/415/417，
             列表里同时有 STM32F411CE 和 STM32F407VET6 时应该选后者 '''
-        for part in chipid.part_prefixes(info):
+        for part in chipid.part_prefixes(cand):
             exact = [name for name in matched if name.upper().startswith(part)]
             if exact:
                 return exact[0], others
 
         return (matched[0] if matched else None), others
 
-    def fetch_device(self, info):
+    ''' 联网取算法 '''
+
+    def net_say(self, message):
+        print(message)
+
+        QApplication.processEvents()    # 下载期间界面不至于假死
+
+    def net_call(self, func, *args, **kwargs):
+        ''' 联网取算法。证书验不过时问一声，用户点头就对那个站点放行后重来一次 '''
         import cmsispack
 
-        pack   = info['pack']
-        prefix = chipid.FAMILIES[info['family']][4]
+        for attempt in (1, 2):
+            cert = None
 
-        QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-        try:
-            found = cmsispack.download_algorithm(pack, prefix, info['flash_kb'],
-                                                 os.path.join(APP_DIR, 'FlashAlgo'), progress=print)
-        except Exception as e:
-            print(f'下载算法失败：{e}')
-            QMessageBox.critical(self, '下载失败', str(e), QMessageBox.Yes)
+            QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+            try:
+                return func(*args, progress=self.net_say, **kwargs)
+
+            except cmsispack.CertExpired as e:
+                cert = e
+
+            except Exception as e:
+                print(f'下载算法失败：{e}')
+                self.alert('下载失败', str(e))
+
+                return None
+
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            if attempt == 2 or not self.trust_host(cert):
+                print(f'下载算法失败：{cert}')
+
+                return None
+
+            cmsispack.TRUSTED.add(cert.host)
+
+    def trust_host(self, cert):
+        ''' 证书验不过就别替用户拿主意——取回来的是要在目标芯片上执行的烧写算法，
+            跳过校验意味着没人担保它没在路上被换过 '''
+        return self.confirm('证书验证不通过',
+                            f'{cert.host} 的 HTTPS 证书验证不通过：{cert.detail}',
+                            f'有的厂商（比如兆易的 pack 服务器）证书长期就是过期的，未必是出了事；'
+                            f'但这也意味着这次下载没法担保内容没被动过手脚。\n\n'
+                            f'取回来的 .FLM 是要在目标芯片上执行的。仍然从该站点下载？')
+
+    def fetch_device(self, cand):
+        import cmsispack
+
+        found = self.net_call(cmsispack.download_algorithm, cand['pack'], cand['prefix'],
+                              cand['flash_kb'], os.path.join(APP_DIR, 'FlashAlgo'),
+                              url=None, flash_start=cand['flash_start'])
+        if found is None:
             return
-        finally:
-            QApplication.restoreOverrideCursor()
+
+        self.add_device(found, cand)
+
+    @pyqtSlot()
+    def on_btnSearch_clicked(self):
+        self.search_device('')
+
+    def search_device(self, keyword=''):
+        ''' 按型号去 pack 服务器上找算法。识别不出来的芯片（HC32 等）走这条路 '''
+        import cmsispack
+
+        dlg = SearchDialog(self, keyword)
+        if dlg.exec_() != QDialog.Accepted or not dlg.chosen:
+            return
+
+        pack, url, dev = dlg.chosen
+
+        found = self.net_call(cmsispack.download_algorithm_named, pack, dev['name'],
+                              os.path.join(APP_DIR, 'FlashAlgo'), url=url)
+        if found is None:
+            return
+
+        self.add_device(found)
+
+    def add_device(self, found, cand=None):
+        ''' 把取到的算法写进 devices.txt 并选中 '''
+
+        ''' pack 里的 RAM 容量偶尔靠不住（NSING 给 N32G451CC 只写了 6 KB，
+            同系列 128 KB 的那颗却写了 48 KB），芯片自己报的更可信 '''
+        if cand and cand.get('ram_size') and cand['ram_size'] > found['ram_size']:
+            print(f'pack 里写的 RAM 是 {found["ram_size"] // 1024} KB，'
+                  f'芯片自己报 {cand["ram_size"] // 1024} KB，按后者')
+
+            found['ram_start'], found['ram_size'] = cand['ram_start'], cand['ram_size']
 
         name = found['name']
         while name in device.Devices:       # 名字撞了就加后缀，不动已有词条
@@ -779,18 +1214,17 @@ class MCUProg(QWidget):
                 f.write(('' if self.devices_txt_ends_with_newline() else '\n') + line + '\n')
         except Exception as e:
             print(f'写入 devices.txt 失败：{e}')
-            QMessageBox.critical(self, '写入失败', str(e), QMessageBox.Yes)
+            self.alert('写入失败', str(e))
             return
 
         print(f'已加入 devices.txt：{line}')
 
         self.reload_devices(name)
 
-        QMessageBox.information(self, '已添加',
-                                f'{chipid.describe(info)}\n\n已添加型号 {name} 并选中。\n\n'
-                                f'算法：{os.path.basename(found["path"])}\n'
-                                f'RAM ：0x{found["ram_start"]:08X} / {found["ram_size"]//1024} KB',
-                                QMessageBox.Yes)
+        self.notice('已添加', f'已添加型号 {name} 并选中。',
+                    f'算法：{os.path.basename(found["path"])}\n'
+                    f'Flash：0x{found["flash_start"]:08X} + {found["flash_size"] // 1024} KB\n'
+                    f'RAM ：0x{found["ram_start"]:08X} + {found["ram_size"] // 1024} KB')
 
     def devices_txt_ends_with_newline(self):
         try:
@@ -961,7 +1395,7 @@ class MCUProg(QWidget):
     def on_btnDelRow_clicked(self):
         rows = {index.row() for index in self.table.selectedIndexes()}
         if not rows:
-            QMessageBox.information(self, '删除条目', '请先选中要删除的行', QMessageBox.Yes)
+            self.notice('删除条目', '请先选中要删除的行')
             return
 
         self.loadList([row for i, row in enumerate(self.listRows()) if i not in rows])
@@ -1128,7 +1562,7 @@ class MCUProg(QWidget):
             func()
         except Exception as e:
             print(f'{name}失败：{e}')
-            QMessageBox.critical(self, f'{name}失败', str(e), QMessageBox.Yes)
+            self.alert(f'{name}失败', str(e))
             return
 
         print(f'{name} OK')
@@ -1190,18 +1624,18 @@ class MCUProg(QWidget):
             addr = int(self.edtMemAddr.text().strip(), 16)
             size = int(self.edtMemSize.text().strip(), 0)
         except ValueError:
-            QMessageBox.warning(self, '格式错误', '地址请用十六进制，长度请用十进制或 0x 开头', QMessageBox.Yes)
+            self.warn('格式错误', '地址请用十六进制，长度请用十进制或 0x 开头')
             return
 
         if not 0 < size <= 64 * 1024:
-            QMessageBox.warning(self, '长度超范围', '一次最多读 64 KB', QMessageBox.Yes)
+            self.warn('长度超范围', '一次最多读 64 KB')
             return
 
         try:
             data = bytes(bytearray(self.xlk.read_mem_U8(addr, size)))
         except Exception as e:
             print(f'读内存失败：{e}')
-            QMessageBox.critical(self, '读内存失败', str(e), QMessageBox.Yes)
+            self.alert('读内存失败', str(e))
             return
 
         self.txtMem.setPlainText(hexdump(addr, data))
@@ -1211,24 +1645,24 @@ class MCUProg(QWidget):
         try:
             addr = int(self.edtMemAddr.text().strip(), 16)
         except ValueError:
-            QMessageBox.warning(self, '格式错误', '地址请用十六进制', QMessageBox.Yes)
+            self.warn('格式错误', '地址请用十六进制')
             return
 
         try:
             data = bytes.fromhex(re.sub(r'0x|[,\s]', ' ', self.edtMemData.text()).replace(' ', ''))
         except ValueError:
-            QMessageBox.warning(self, '格式错误', '写入的数据请用十六进制字节，如 12 34 AB CD', QMessageBox.Yes)
+            self.warn('格式错误', '写入的数据请用十六进制字节，如 12 34 AB CD')
             return
 
         if not data:
-            QMessageBox.warning(self, '没有数据', '请先填写要写入的十六进制字节', QMessageBox.Yes)
+            self.warn('没有数据', '请先填写要写入的十六进制字节')
             return
 
         try:
             self.xlk.write_mem_U8(addr, data)
         except Exception as e:
             print(f'写内存失败：{e}')
-            QMessageBox.critical(self, '写内存失败', str(e), QMessageBox.Yes)
+            self.alert('写内存失败', str(e))
             return
 
         print(f'已向 0x{addr:08X} 写入 {len(data)} 字节')
