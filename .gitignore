@@ -32,6 +32,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# 这个不是 PyInstaller 自动生成的，里面有手写的发布布局逻辑，要跟踪
+!MCUProg.spec
 
 # Installer logs
 pip-log.txt

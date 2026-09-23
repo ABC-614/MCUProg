@@ -22,7 +22,11 @@ import device.chip
 import device.flash
 
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+''' 数据文件（MCUProg.ui、devices.txt、setting.ini、FlashAlgo）一律放在
+    程序自己旁边。打包成 exe 之后这一点尤其要紧：devices.txt 和 setting.ini
+    是程序运行时要写回去的，下载来的 .FLM 也往 FlashAlgo 里落，
+    这些都不能塞进 PyInstaller 的 _internal '''
+APP_DIR = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__))
 
 os.environ['PATH'] = os.path.join(APP_DIR, 'libusb-1.0.24/MinGW64/dll') + os.pathsep + os.environ['PATH']
 
