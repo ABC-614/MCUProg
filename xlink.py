@@ -165,6 +165,21 @@ class XLink(object):
 
     def reset(self):
         self.xlk.reset()
+
+    def clear_error(self):
+        ''' 一笔传输失败后，调试口会把粘滞错误标志立起来，不清掉的话后面每一笔
+            都跟着报错。目标忙得来不及应答是常事，清一下接着问就行 '''
+        if isinstance(self.xlk, DIRECT):
+            return
+
+        try:
+            dp = self.xlk.ap.dp
+
+            dp.flush()
+            dp.clear_sticky_err()
+
+        except Exception:
+            pass
     
     ''' Cortex-M 的调试异常与监视控制寄存器，bit0 = 复位后停在复位向量 '''
     DEMCR        = 0xE000EDFC

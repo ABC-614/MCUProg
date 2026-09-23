@@ -20,6 +20,8 @@ class Flash(object):
 
         self.aborted = aborted or (lambda: False)
 
+        self.stalled = False    # 是否已经提示过"目标忙时不应答"
+
         # perform a reset and stop the core on the reset handler
         try:
             self.xlink.reset_and_halt()
@@ -163,19 +165,51 @@ class Flash(object):
             几乎全花在等待上，所以先连着查、再指数退避 '''
         delay = 0
         start = time.time()
-        while not self.xlink.halted():
+
+        stalls, last = 0, None
+
+        while True:
+            try:
+                if self.xlink.halted():
+                    break
+
+            except Exception as e:
+                ''' 擦除的时候不少芯片的 Flash 控制器会把 AHB 总线占住，这期间
+                    调试口连 DHCSR 都读不到，报的是传输超时。那是"还忙着"，不是失败——
+                    把粘滞错误清掉接着问，真出了事有下面的 timeout 兜底。
+
+                    以前这里是 while not self.xlink.halted():，一次读不到就把整个
+                    烧写掀掉了（LKS32MC03x 擦一个扇区就会这样）。 '''
+                stalls, last = stalls + 1, e
+
+                self.xlink.clear_error()
+
+                delay = max(delay, 0.002)
+
             if self.aborted():
                 self.xlink.halt()
 
                 raise Aborted('已中断')
 
             if time.time() - start > timeout:
+                if stalls:
+                    raise Exception(
+                        f'烧写算法执行超时（{timeout:.0f} s）：这期间调试口 {stalls} 次读不到目标'
+                        f'（{type(last).__name__}）。可能是算法一直没跑完、目标跑飞了，'
+                        f'或者 Flash 被写保护，擦除命令根本没被接受')
+
                 raise Exception(f'烧写算法执行超时（{timeout:.0f} s），目标芯片可能已经跑飞')
 
             if delay:
                 time.sleep(delay)
 
             delay = min(delay * 2 if delay else 0.0002, 0.01)
+
+        if stalls and not self.stalled:
+            self.stalled = True
+
+            print(f'提示：目标在 Flash 忙的时候不应答调试口（这次等了 {stalls} 轮），已自动重试。'
+                  f'这是正常现象，不是错误')
 
         if self.xlink.mode.startswith('arm'):
             return self.xlink.read_reg('r0')
